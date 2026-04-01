@@ -1,4 +1,10 @@
-# /home/fedor/Study/lectures/Bonus_Track_LLM_Agentic_AI_2025-2026/.gitignore
-
 data/
 *.csv
+.mcp.json
+.claude
+.env
+logs/
+__pycache__/
+*.pyc
+.venv/
+.DS_Store

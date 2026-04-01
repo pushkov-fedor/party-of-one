@@ -1,0 +1,212 @@
+# Spec: Serving & Configuration
+
+## Обзор
+
+Как запустить, как настроить, куда складывать секреты.
+
+---
+
+## Запуск
+
+### Минимальный запуск
+
+```bash
+# Установка зависимостей
+pip install -r requirements.txt
+
+# Инициализация RAG-индекса (однократно)
+python -m party_of_one.init_index --source data/cairn-srd.md
+
+# Запуск CLI
+python -m party_of_one.cli
+
+# Или запуск Web UI
+python -m party_of_one.web --port 8080
+```
+
+### Зависимости (ожидаемые)
+
+| Пакет | Назначение |
+|-------|-----------|
+| `openai` | LLM API клиент (OpenAI-compatible API для OpenRouter) |
+| `chromadb` | Локальный vector store |
+| `tiktoken` | Подсчёт токенов |
+| `sqlite3` | Встроен в Python |
+| `pydantic` | Валидация команд и конфигов |
+| `structlog` | Structured logging |
+| `python-dotenv` | Загрузка .env файла |
+| `fastapi` + `uvicorn` | Web UI (опционально) |
+
+---
+
+## Конфигурация
+
+### Файл конфигурации
+
+`config.yaml` в корне проекта:
+
+```yaml
+# LLM
+llm:
+  provider: "openrouter"         # openrouter
+  model: "anthropic/claude-sonnet-4-20250514"   # основная модель для агентов (OpenRouter model id)
+  model_cheap: "anthropic/claude-haiku-3"       # для компрессии
+  temperature_dm: 0.75
+  temperature_companion: 0.65
+  temperature_compressor: 0.2
+  max_tokens_dm: 1000
+  max_tokens_companion: 400
+  timeout_seconds: 10
+  max_retries: 3
+
+# RAG
+rag:
+  embedding_model: "text-embedding-3-small"
+  vector_store_path: "./data/chroma"
+  top_k: 3
+  min_similarity: 0.3
+
+# Context
+context:
+  compression_threshold_tokens: 3000
+  max_recent_turns: 8
+  max_recent_turns_companion: 5
+
+# Session
+session:
+  db_path: "./data/sessions.db"
+  auto_save_interval_turns: 5
+
+# Guardrails
+guardrails:
+  pre_llm_enabled: true
+  post_llm_enabled: true
+  max_input_length: 1000
+  max_retries_on_block: 2
+
+# Logging
+logging:
+  level: "INFO"
+  file: "./logs/session.jsonl"
+  log_prompts: true          # полные промпты в лог (для отладки)
+  log_responses: true        # полные ответы в лог
+
+# Game
+game:
+  max_tool_calls_per_turn: 10
+  companion_profiles_path: "./data/companions.yaml"
+  cairn_srd_path: "./data/cairn-srd.md"
+```
+
+### Переопределение через env
+
+Любой параметр можно переопределить переменной окружения:
+
+```bash
+PARTY_LLM__PROVIDER=openrouter
+PARTY_LLM__MODEL=anthropic/claude-sonnet-4-20250514
+PARTY_SESSION__DB_PATH=/tmp/test.db
+```
+
+Формат: `PARTY_{SECTION}__{KEY}`, двойное подчёркивание как разделитель.
+
+---
+
+## Секреты
+
+### Хранение
+
+В config.yaml секретов нет. Только через env:
+
+```bash
+export OPENROUTER_API_KEY="sk-or-..."
+```
+
+### .env файл
+
+Для локальной разработки -- `.env` в корне, добавлен в .gitignore:
+
+```
+OPENROUTER_API_KEY=sk-or-...
+```
+
+Подхватывается через `python-dotenv` при старте.
+
+### Ротация
+
+Ключи можно менять без рестарта -- клиент читает env при каждом вызове.
+(Для PoC ладно, если читаем только при инициализации.)
+
+---
+
+## Версии моделей
+
+### Стратегия
+
+Используем OpenRouter как единый провайдер. В конфиге указываем OpenRouter model id
+(формат `vendor/model-name`), например:
+
+```yaml
+model: "anthropic/claude-sonnet-4-20250514"
+model: "openai/gpt-4o-2024-08-06"
+model: "google/gemini-2.0-flash-001"
+```
+
+Пишем конкретную версию, не alias -- alias на стороне OpenRouter может поменяться.
+
+### Переключение
+
+Смена модели -- одна строчка в конфиге. Промпты модель-агностичны,
+специфичных фич провайдера не используем (кроме tool use, он стандартизирован через OpenRouter).
+
+### Совместимость
+
+Минимум от модели:
+- Tool use / function calling
+- Context window >= 8K токенов
+- Нормальное следование system prompt
+
+---
+
+## Структура проекта (ожидаемая)
+
+```
+party-of-one/
+├── config.yaml
+├── requirements.txt
+├── .env                    # секреты (в .gitignore)
+├── data/
+│   ├── cairn-srd.md        # правила Cairn
+│   ├── companions.yaml     # профили компаньонов
+│   ├── chroma/             # vector store (в .gitignore)
+│   └── sessions.db         # SQLite (в .gitignore)
+├── logs/
+│   └── session.jsonl       # логи (в .gitignore)
+├── docs/                   # документация (этот milestone)
+├── src/
+│   └── party_of_one/
+│       ├── __init__.py
+│       ├── cli.py           # CLI interface
+│       ├── web.py           # Web interface (FastAPI)
+│       ├── orchestrator.py  # Turn management
+│       ├── agents/
+│       │   ├── dm.py        # DM Agent
+│       │   ├── companion.py # Companion Agent
+│       │   └── watch_mode.py # Watch mode (дефолтное действие вместо игрока)
+│       ├── tools/
+│       │   ├── dice.py      # Dice roller
+│       │   └── world.py     # World state tools
+│       ├── rag/
+│       │   ├── indexer.py   # Cairn SRD indexing
+│       │   └── retriever.py # Search
+│       ├── guardrails/
+│       │   ├── pre_llm.py   # Input filter
+│       │   └── post_llm.py  # Output filter
+│       ├── memory/
+│       │   ├── world_state.py  # SQLite CRUD
+│       │   ├── compressor.py   # History compression
+│       │   └── context.py      # Context builder
+│       ├── config.py        # Config loading
+│       └── logger.py        # Structured logging
+└── tests/
+```
