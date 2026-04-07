@@ -11,17 +11,20 @@
 ### Минимальный запуск
 
 ```bash
+# Python 3.11+
+python --version  # >= 3.11
+
 # Установка зависимостей
 pip install -r requirements.txt
 
 # Инициализация RAG-индекса (однократно)
-python -m party_of_one.init_index --source data/cairn-srd.md
+python -m party_of_one.init_index --source data/cairn-srd-ru.md
 
-# Запуск CLI
+# Запуск игры
 python -m party_of_one.cli
 
-# Или запуск Web UI
-python -m party_of_one.web --port 8080
+# Запуск в watch mode (для eval)
+python -m party_of_one.cli --watch --rounds 30
 ```
 
 ### Зависимости (ожидаемые)
@@ -30,12 +33,14 @@ python -m party_of_one.web --port 8080
 |-------|-----------|
 | `openai` | LLM API клиент (OpenAI-compatible API для OpenRouter) |
 | `chromadb` | Локальный vector store |
+| `sentence-transformers` | Локальная embedding модель |
 | `tiktoken` | Подсчёт токенов |
 | `sqlite3` | Встроен в Python |
 | `pydantic` | Валидация команд и конфигов |
 | `structlog` | Structured logging |
 | `python-dotenv` | Загрузка .env файла |
-| `fastapi` + `uvicorn` | Web UI (опционально) |
+| `textual` | TUI-фреймворк (терминальный интерфейс) |
+| `rich` | Стилизованный вывод в терминал (используется Textual) |
 
 ---
 
@@ -61,7 +66,7 @@ llm:
 
 # RAG
 rag:
-  embedding_model: "text-embedding-3-small"
+  embedding_model: "deepvk/USER-bge-m3"   # локальная модель, русский язык
   vector_store_path: "./data/chroma"
   top_k: 3
   min_similarity: 0.3
@@ -94,8 +99,9 @@ logging:
 # Game
 game:
   max_tool_calls_per_turn: 10
+  max_inventory_slots: 10       # Cairn: 10 слотов (items + fatigue)
   companion_profiles_path: "./data/companions.yaml"
-  cairn_srd_path: "./data/cairn-srd.md"
+  cairn_srd_path: "./data/cairn-srd-ru.md"
 ```
 
 ### Переопределение через env
@@ -176,8 +182,8 @@ party-of-one/
 ├── requirements.txt
 ├── .env                    # секреты (в .gitignore)
 ├── data/
-│   ├── cairn-srd.md        # правила Cairn
-│   ├── companions.yaml     # профили компаньонов
+│   ├── cairn-srd-ru.md     # правила Cairn (перевод на русский)
+│   ├── companions.yaml     # преднастроенные профили компаньонов
 │   ├── chroma/             # vector store (в .gitignore)
 │   └── sessions.db         # SQLite (в .gitignore)
 ├── logs/
@@ -186,8 +192,7 @@ party-of-one/
 ├── src/
 │   └── party_of_one/
 │       ├── __init__.py
-│       ├── cli.py           # CLI interface
-│       ├── web.py           # Web interface (FastAPI)
+│       ├── cli.py           # TUI interface (Textual)
 │       ├── orchestrator.py  # Turn management
 │       ├── agents/
 │       │   ├── dm.py        # DM Agent

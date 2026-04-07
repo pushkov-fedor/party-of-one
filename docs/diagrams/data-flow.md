@@ -20,9 +20,13 @@
 
 ```json
 {
-  "timestamp": "2026-03-31T14:23:01Z",
-  "turn_id": 42,
+  "ts": "2026-03-31T14:23:01.234Z",
+  "event": "llm_call",
   "agent": "dm",
+  "prompt_version": "dm-v1",
+  "turn": 42,
+  "round": 14,
+  "model": "anthropic/claude-sonnet-4-20250514",
   "prompt_tokens": 4200,
   "completion_tokens": 680,
   "latency_ms": 3200,

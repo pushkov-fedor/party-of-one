@@ -5,6 +5,14 @@
 Внешние зависимости и инструменты агентов. DM Agent обновляет состояние мира
 через tool use (function calling), а не свободным текстом.
 
+### Формат ответа DM Agent
+
+Ответ DM приходит в двух частях:
+- **`content`** — нарратив (свободный текст для игрока)
+- **`tool_calls`** — команды обновления мира (structured, формат гарантирован API)
+
+Это стандартный механизм function calling в OpenAI-совместимых API. Парсить JSON руками не нужно — SDK разделяет нарратив и вызовы инструментов автоматически.
+
 ---
 
 ## LLM API
@@ -114,7 +122,7 @@ JSON schema и валидация.
     "character.status != 'dead'",
     "amount > 0"
   ],
-  "side_effects": "Уменьшает HP. Если HP <= 0 — уменьшает STR на остаток. Если STR <= 0 — status='dead'",
+  "side_effects": "Уменьшает HP. Если HP == 0 — возвращает requires_scar_roll: true (DM должен бросить d12 по таблице шрамов). Если HP < 0 — остаток идёт в STR, возвращает requires_str_save: true (DM должен вызвать roll_dice(20) для спасброска STR; провал → update_character(status='incapacitated')). Если STR <= 0 — status='dead'.",
   "rollback": "Транзакция SQLite — при ошибке откат"
 }
 ```
@@ -131,6 +139,7 @@ JSON schema и валидация.
   "validation": [
     "character_id существует",
     "character.status != 'dead'",
+    "character.status != 'deprived' (истощённые не восстанавливают HP)",
     "HP не может превысить max_hp"
   ],
   "side_effects": "Увеличивает HP (cap: max_hp)"
@@ -150,7 +159,7 @@ JSON schema и валидация.
   "validation": [
     "character_id существует",
     "field входит в допустимый список",
-    "если field='status' — value in ['alive', 'dead', 'incapacitated']",
+    "если field='status' — value in ['alive', 'dead', 'incapacitated', 'deprived', 'paralyzed', 'delirious']",
     "если field='disposition' — value in ['friendly', 'neutral', 'hostile']",
     "если field='location_id' — location существует"
   ],
@@ -212,12 +221,18 @@ JSON schema и валидация.
   "name": "add_item",
   "parameters": {
     "character_id": {"type": "string"},
-    "item": {"type": "string", "maxLength": 100}
+    "item": {"type": "string", "maxLength": 100},
+    "bulky": {"type": "boolean", "default": false}
   },
-  "validation": ["character_id существует"],
-  "side_effects": "Append в inventory (JSON array)"
+  "validation": [
+    "character_id существует",
+    "occupied_slots + new_item_slots <= 10 (иначе отклонить с ошибкой 'инвентарь полон')"
+  ],
+  "side_effects": "Append в inventory. Булки-предмет занимает 2 слота, обычный — 1. Если после добавления occupied_slots == 10 — автоматически HP = 0 (персонаж перегружен)."
 }
 ```
+
+**Подсчёт слотов:** `occupied_slots = sum(item.slots for item in inventory) + fatigue`. Каждая Fatigue занимает 1 слот. Максимум 10 слотов всего.
 
 ```json
 {
@@ -227,7 +242,70 @@ JSON schema и валидация.
     "item": {"type": "string"}
   },
   "validation": ["character_id существует", "item есть в inventory"],
-  "side_effects": "Удаляет первое совпадение из inventory"
+  "side_effects": "Удаляет первое совпадение из inventory. Если occupied_slots < 10 и HP был 0 из-за перегруза — восстанавливает HP до 1."
+}
+```
+
+#### add_fatigue / remove_fatigue
+
+```json
+{
+  "name": "add_fatigue",
+  "description": "Добавить усталость (от заклинания, истощения и т.д.). Каждая усталость занимает 1 слот инвентаря.",
+  "parameters": {
+    "character_id": {"type": "string"}
+  },
+  "validation": ["character_id существует", "character.status != 'dead'"],
+  "side_effects": "fatigue += 1. Если occupied_slots >= 10 — HP = 0 (перегружен)."
+}
+```
+
+```json
+{
+  "name": "remove_fatigue",
+  "description": "Убрать одну усталость (после полноценного отдыха в безопасности).",
+  "parameters": {
+    "character_id": {"type": "string"}
+  },
+  "validation": ["character_id существует", "fatigue > 0"],
+  "side_effects": "fatigue -= 1."
+}
+```
+
+#### damage_stat
+
+```json
+{
+  "name": "damage_stat",
+  "description": "Прямой урон по характеристике (минуя HP). Используется для эффектов монстров, ловушек и критических последствий.",
+  "parameters": {
+    "character_id": {"type": "string"},
+    "stat": {"type": "string", "enum": ["strength", "dexterity", "willpower"]},
+    "amount": {"type": "integer", "minimum": 1}
+  },
+  "validation": [
+    "character_id существует",
+    "character.status != 'dead'"
+  ],
+  "side_effects": "Уменьшает характеристику. Если strength <= 0 — status='dead'. Если dexterity <= 0 — status='paralyzed'. Если willpower <= 0 — status='delirious'."
+}
+```
+
+#### update_gold
+
+```json
+{
+  "name": "update_gold",
+  "description": "Изменить количество золота у персонажа.",
+  "parameters": {
+    "character_id": {"type": "string"},
+    "amount": {"type": "integer"}
+  },
+  "validation": [
+    "character_id существует",
+    "итоговое значение >= 0"
+  ],
+  "side_effects": "gold += amount. Отрицательный amount для траты."
 }
 ```
 
@@ -245,17 +323,18 @@ JSON schema и валидация.
     "disposition": {"type": "string", "enum": ["friendly", "neutral", "hostile"]},
     "location_id": {"type": "string"},
     "strength": {"type": "integer"},
-    "dex": {"type": "integer"},
-    "wil": {"type": "integer"},
+    "dexterity": {"type": "integer"},
+    "willpower": {"type": "integer"},
     "hp": {"type": "integer"},
-    "armor": {"type": "integer", "default": 0}
+    "armor": {"type": "integer", "default": 0, "maximum": 3},
+    "gold": {"type": "integer", "default": 0}
   },
   "validation": [
     "name не пустое",
     "location_id существует",
     "role != 'player' (игрок создаётся только при инициализации)"
   ],
-  "side_effects": "INSERT в таблицу characters, генерирует уникальный character_id. max_hp устанавливается равным hp при создании."
+  "side_effects": "INSERT в таблицу characters, генерирует уникальный character_id. max_hp = hp, max_strength = strength, max_dexterity = dexterity, max_willpower = willpower при создании. Начальный инвентарь добавляется отдельными вызовами add_item после создания."
 }
 ```
 
@@ -267,15 +346,16 @@ JSON schema и валидация.
   "description": "Восстановить характеристику после отдыха или лечения.",
   "parameters": {
     "character_id": {"type": "string"},
-    "stat": {"type": "string", "enum": ["strength", "dex", "wil"]},
+    "stat": {"type": "string", "enum": ["strength", "dexterity", "willpower"]},
     "amount": {"type": "integer", "minimum": 1}
   },
   "validation": [
     "character_id существует",
     "character.status != 'dead'",
-    "итоговое значение не превышает начальное (max)"
+    "character.status != 'deprived' (истощённые не восстанавливают характеристики)",
+    "итоговое значение не превышает начальное (max_strength / max_dexterity / max_willpower)"
   ],
-  "side_effects": "Увеличивает указанную характеристику (cap: начальное значение)"
+  "side_effects": "Увеличивает указанную характеристику (cap: соответствующее max-поле)"
 }
 ```
 
@@ -287,7 +367,7 @@ JSON schema и валидация.
   "description": "Изменить описание или связи существующей локации.",
   "parameters": {
     "location_id": {"type": "string"},
-    "field": {"type": "string", "enum": ["description", "connected_to"]},
+    "field": {"type": "string", "enum": ["description", "connected_to", "discovered"]},
     "value": {"type": "string"}
   },
   "validation": [
@@ -362,7 +442,8 @@ JSON schema и валидация.
 |-------|----------|-------------|
 | Max команд per turn | 10 | Обычный ход: 1-3 команды. AoE по группе: ~6. 10 -- запас на сложные сцены и защита от галлюцинаций |
 | Max damage per call | 50 | Максимальный кубик в Cairn -- d12 (12). 50 покрывает любой легитимный урон с множителями |
-| Max inventory size | 20 items | В Cairn лимит 10 слотов; 20 -- с запасом на мелочь вне слотов |
+| Max inventory slots | 10 | Cairn: 10 слотов (предметы + усталость). Громоздкие = 2 слота |
+| Max armor | 3 | Cairn: максимум 3 Брони |
 
 Превышение -- команда отклоняется, DM получает сообщение об ошибке.
 
@@ -388,9 +469,8 @@ def roll_dice(sides: int, count: int = 1) -> dict:
 
 | Параметр | Значение |
 |----------|----------|
-| Модель | `text-embedding-3-small` (через OpenRouter) |
-| Вызов | При RAG-запросе (не каждый ход) |
-| Timeout | 5 с |
-| Retry | 2 попытки |
+| Модель | `deepvk/USER-bge-m3` (локальная, через sentence-transformers) |
+| Язык | Русский (Cairn SRD переведён на русский) |
+| Вызов | Локальный inference, без API |
+| Размерность | 1024 |
 | Fallback | DM работает без RAG (warning в логах) |
-| Кэш | In-memory LRU, 100 entries |

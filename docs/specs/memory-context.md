@@ -34,17 +34,28 @@ class Character:  # все сущности: игрок, компаньоны, N
     class_: str
     role: str  # player | companion | npc
     strength: int
-    dex: int
-    wil: int
+    dexterity: int
+    willpower: int
+    max_strength: int      # начальное значение, фиксируется при создании
+    max_dexterity: int     # начальное значение, фиксируется при создании
+    max_willpower: int     # начальное значение, фиксируется при создании
     hp: int
     max_hp: int
     armor: int = 0
-    inventory: list[str] = field(default_factory=list)
-    status: str = "alive"  # alive | dead | incapacitated
+    gold: int = 0
+    inventory: list[InventoryItem] = field(default_factory=list)
+    fatigue: int = 0  # каждая усталость занимает 1 слот инвентаря
+    status: str = "alive"  # alive | dead | incapacitated | deprived | paralyzed | delirious
     location_id: str = ""
     description: str = ""
     disposition: str = ""  # friendly | neutral | hostile (в основном для NPC)
     notes: str = ""  # свободное поле для DM
+
+@dataclass
+class InventoryItem:
+    name: str
+    slots: int = 1       # сколько слотов занимает (громоздкие = 2)
+    bulky: bool = False   # громоздкий предмет
 
 @dataclass
 class Location:
@@ -98,12 +109,12 @@ class CompressedHistory:
 Локация: Тёмная пещера (выходы: Лесная поляна, Подземный зал)
 
 Партия:
-- Игрок (Воин): HP 8/12, STR 14, DEX 10, WIL 8 | Меч, щит, факел
-- Кира (Следопыт): HP 6/6, STR 10, DEX 14, WIL 8 | Лук, кинжал
-- Торин (Наёмник): HP 4/8, STR 14, DEX 8, WIL 12 | Секира
+- Игрок (Воин): HP 8/12, STR 14, DEX 10, WIL 8, Броня 2, Золото 15 | Усталость: 1 | Меч (1), щит (1), факел (1) [4/10 слотов]
+- Кира (Следопыт): HP 6/6, STR 10, DEX 14, WIL 8, Броня 1, Золото 8 | Усталость: 0 | Лук (2, громоздкий), кинжал (1) [3/10 слотов]
+- Торин (Наёмник): HP 4/8, STR 14, DEX 8, WIL 12, Броня 1, Золото 3 | Усталость: 0 | Секира (2, громоздкий) [2/10 слотов]
 
 Другие персонажи здесь:
-- Гоблин-стражник (NPC, враждебный): HP 4/4, STR 8, DEX 12, WIL 6
+- Гоблин-стражник (NPC, враждебный): HP 4/4, STR 8, DEX 12, WIL 6, Броня 0
 
 Активные квесты:
 - Найти пропавших шахтёров
@@ -145,13 +156,13 @@ class CompressedHistory:
 
 | Компонент | Токены | Источник |
 |-----------|--------|----------|
-| System prompt | 600–800 | Статичный шаблон |
+| System prompt + шпаргалка механик | 1400–1800 | Статичный шаблон + ключевые правила Cairn |
 | Снимок World State | 400–600 | Из SQLite |
 | Схемы команд | 300–500 | Статичные JSON-схемы |
 | Правила Cairn (RAG) | 0–400 | Если ход затрагивает механику |
 | Сжатая история | 500–1000 | Из SQLite |
 | Последние ходы (как есть) | 1500–2500 | 5–8 ходов |
-| **Итого вход** | **3300–5800** | |
+| **Итого вход** | **4100–6800** | |
 | **Бюджет на ответ** | **500–1000** | |
 
 ### Companion-агент
@@ -196,6 +207,8 @@ System prompt и схемы команд не трогаем.
 ### Промпт компрессора
 
 ```
+[prompt_version: compressor-v1]
+
 Ты — ассистент для ведения журнала RPG-сессии.
 
 Суммаризуй следующие события, сохранив ВСЕ ключевые факты:
@@ -215,7 +228,7 @@ Temperature 0.2 — минимум креативности, максимум т
 ### Дополнение из World State
 
 После компрессии к summary дописываются факты из SQLite (простой SELECT, без LLM):
-- Персонажи со статусом `dead` или `incapacitated`
+- Персонажи со статусом `dead`, `incapacitated`, `deprived`, `paralyzed` или `delirious`
 - Квесты со статусом `completed` или `failed`
 - Текущая локация партии
 
