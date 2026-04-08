@@ -89,6 +89,7 @@ guardrails:
   post_llm_enabled: true
   max_input_length: 1000
   max_retries_on_block: 2
+  embedding_similarity_threshold: 0.82  # cosine similarity порог для embedding-слоя
 
 # Logging
 logging:

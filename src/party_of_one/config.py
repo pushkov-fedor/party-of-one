@@ -46,6 +46,7 @@ class GuardrailsConfig(BaseModel):
     post_llm_enabled: bool = True
     max_input_length: int = 1000
     max_retries_on_block: int = 2
+    embedding_similarity_threshold: float = 0.82
 
 
 class LoggingConfig(BaseModel):

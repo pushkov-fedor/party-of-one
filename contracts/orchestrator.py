@@ -80,7 +80,8 @@ class Orchestrator(Protocol):
             The ``DMResponse`` containing the opening narrative.
 
         Raises:
-            ValueError: If *companion_choices* length != 2 or names
+            ValueError: If *player_archetype* is empty, or
+                *companion_choices* length != 2, or names
                 don't match available profiles.
             RuntimeError: If the DM init call fails after retries.
         """

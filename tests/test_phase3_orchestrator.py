@@ -287,7 +287,15 @@ class TestSessionStateTransitions:
 # ===========================================================================
 
 class TestInitGameValidation:
-    """init_game should validate companion_choices."""
+    """init_game should validate inputs per contract.
+
+    Contract (contracts/orchestrator.py):
+        Raises ValueError if player_archetype is empty, or
+        companion_choices length != 2, or names don't match available profiles.
+
+    Spec (docs/specs/orchestrator.md):
+        'Имя и архетип не пустые (ValueError если пустые).'
+    """
 
     def test_companion_choices_must_be_length_two(self):
         """Per contract: ValueError if companion_choices length != 2."""
@@ -304,6 +312,57 @@ class TestInitGameValidation:
         profile_names = {p.name for p in profiles}
         assert "Branka" in profile_names
         assert "NonExistent" not in profile_names
+
+    @pytest.fixture
+    def orchestrator(self, tmp_path):
+        """Create orchestrator with mocked dependencies for init_game validation tests.
+
+        We mock all heavy dependencies (LLM, RAG, embedding) since we only need
+        the validation path that should raise ValueError BEFORE any real work.
+        """
+        from party_of_one.orchestrator import Orchestrator as OrchestratorImpl
+
+        db = WorldStateDB(str(tmp_path / "test.db"))
+
+        mock_config = MagicMock()
+        mock_config.game.companion_profiles_path = "data/companions.yaml"
+        mock_config.session.db_dir = str(tmp_path)
+        mock_config.guardrails.pre_llm_enabled = True
+        mock_config.guardrails.post_llm_enabled = True
+
+        orch = OrchestratorImpl.__new__(OrchestratorImpl)
+        orch.config = mock_config
+        orch.db = db
+        orch.dm_agent = MagicMock()
+        orch.companion_agent = MagicMock()
+        orch.pre_llm = MagicMock()
+        orch.post_llm = MagicMock()
+        orch.tool_executor = MagicMock()
+        return orch
+
+    @pytest.mark.parametrize("empty_archetype", [
+        "",
+        "   ",
+        "\t",
+        "\n",
+    ])
+    def test_empty_player_archetype_raises_value_error(self, orchestrator, empty_archetype):
+        """Per contract: ValueError if player_archetype is empty.
+
+        Spec (docs/specs/orchestrator.md):
+            'Имя и архетип не пустые (ValueError если пустые).'
+        Contract (contracts/orchestrator.py):
+            'Raises ValueError if player_archetype is empty.'
+
+        The validation should reject empty strings and whitespace-only strings
+        before any LLM or DB operations are attempted.
+        """
+        with pytest.raises(ValueError):
+            orchestrator.init_game(
+                player_archetype=empty_archetype,
+                companion_choices=["Branka", "Tikhimir"],
+                setting_description="A dark forest",
+            )
 
 
 # ===========================================================================

@@ -77,6 +77,7 @@ def full_yaml(tmp_path):
             "post_llm_enabled": True,
             "max_input_length": 1000,
             "max_retries_on_block": 2,
+            "embedding_similarity_threshold": 0.82,
         },
         "logging": {
             "level": "INFO",

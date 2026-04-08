@@ -9,6 +9,8 @@ from contracts.orchestrator import Orchestrator as OrchestratorContract
 from party_of_one.agents.companion import CompanionAgent, load_companion_profiles
 from party_of_one.agents.dm import DMAgent
 from party_of_one.config import AppConfig
+from party_of_one.guardrails.pre_llm import PreLLMGuardrail
+from party_of_one.guardrails.post_llm import PostLLMGuardrail
 from party_of_one.logger import get_logger
 from party_of_one.memory.world_state import WorldStateDB
 from party_of_one.models import (
@@ -38,7 +40,11 @@ class Orchestrator(OrchestratorContract):
         db_dir.mkdir(parents=True, exist_ok=True)
         self.db = WorldStateDB(str(db_dir / f"{self.session_id}.db"))
         self.executor = ToolExecutor(self.db)
-        self.dm = DMAgent(config.llm, tool_executor=self.executor)
+        self.pre_guardrail = PreLLMGuardrail(config.guardrails)
+        self.post_guardrail = PostLLMGuardrail(config.guardrails, db=self.db)
+        # Wrap executor with guardrail validation — validates BEFORE executing
+        self._guarded_executor = _GuardedToolExecutor(self.executor, self.post_guardrail)
+        self.dm = DMAgent(config.llm, tool_executor=self._guarded_executor)
         self.state = "awaiting_player"
         self.turn_number = 0
         self.round_number = 0
@@ -51,6 +57,10 @@ class Orchestrator(OrchestratorContract):
         self, *, player_archetype: str, companion_choices: list[str],
         setting_description: str, player_name: str = "Hero",
     ) -> DMResponse:
+        if not player_archetype.strip():
+            raise ValueError("player_archetype must not be empty")
+        if not player_name.strip():
+            raise ValueError("player_name must not be empty")
         if len(companion_choices) != 2:
             raise ValueError(f"Exactly 2 companions required, got {len(companion_choices)}")
 
@@ -93,6 +103,25 @@ class Orchestrator(OrchestratorContract):
         actor_roles: list[TurnRole] = []
         companion_texts: dict[str, str] = {}
         self.round_number += 1
+
+        # Pre-LLM guardrail on player input
+        player_action = self.pre_guardrail.sanitize(player_action)
+        pre_check = self.pre_guardrail.check(player_action)
+        if not pre_check.passed:
+            logger.warning("pre_llm_blocked", reason=pre_check.reason)
+            blocked_resp = DMResponse(
+                narrative="*Твой персонаж пытается, но ничего не происходит.*"
+            )
+            blocked_turn = Turn(
+                id=0, turn_number=self.turn_number + 1, role=TurnRole.DM,
+                content=blocked_resp.narrative,
+            )
+            return RoundResult(
+                round_number=self.round_number,
+                turns=[blocked_turn], dm_responses=[blocked_resp],
+                actor_roles=[TurnRole.PLAYER], companion_texts={},
+                session_ended=False,
+            )
 
         # Player turn → DM
         dm_resp, turn = self._process_action(TurnRole.PLAYER, player_action)
@@ -148,20 +177,38 @@ class Orchestrator(OrchestratorContract):
         compressed_text = "\n".join(h.summary for h in compressed) if compressed else ""
         recent_turns = self.db.turns.get_recent(self.config.context.max_recent_turns)
 
-        dm_response = self.dm.generate(
-            action=action,
-            actor_role=role,
-            world_state_snapshot=self.db.snapshot(),
-            compressed_history=compressed_text,
-            recent_turns=recent_turns,
-            rag_results="",
-        )
+        retries = self.config.guardrails.max_retries_on_block
+        for attempt in range(1 + retries):
+            dm_response = self.dm.generate(
+                action=action,
+                actor_role=role,
+                world_state_snapshot=self.db.snapshot(),
+                compressed_history=compressed_text,
+                recent_turns=recent_turns,
+                rag_results="",
+            )
+
+            # Post-LLM: leak detection on narrative
+            leak_check = self.post_guardrail.check_narrative(dm_response.narrative)
+            if not leak_check.passed:
+                logger.warning("post_llm_leak_retry", attempt=attempt + 1,
+                               reason=leak_check.reason)
+                if attempt < retries:
+                    continue
+                dm_response = DMResponse(
+                    narrative="*Тишина повисает в воздухе...*"
+                )
+
+            # Command validation happens inside GuardedToolExecutor
+            # (before each execute, during the tool_use_loop)
+            break
 
         self.turn_number += 1
         dm_turn = Turn(
             id=0, turn_number=self.turn_number, role=TurnRole.DM,
             content=dm_response.narrative,
-            commands=[{"name": tc["name"], "args": tc["args"]} for tc in dm_response.tool_calls],
+            commands=[{"name": tc["name"], "args": tc["args"]}
+                      for tc in dm_response.tool_calls],
         )
         self.db.turns.save_turn(dm_turn)
         return dm_response, dm_turn
@@ -218,3 +265,22 @@ class Orchestrator(OrchestratorContract):
     @property
     def is_ended(self) -> bool:
         return self.state == "session_ended"
+
+
+class _GuardedToolExecutor:
+    """Wraps ToolExecutor with guardrail validation before each execute."""
+
+    def __init__(self, executor: ToolExecutor, guardrail: PostLLMGuardrail):
+        self._executor = executor
+        self._guardrail = guardrail
+
+    def execute(self, tool_name: str, params: dict):
+        from party_of_one.models import ToolCallResult
+        # Validate via guardrail BEFORE executing
+        check = self._guardrail.validate_commands([{"name": tool_name, "args": params}])
+        if not check.passed:
+            return ToolCallResult(
+                tool_name=tool_name, success=False,
+                error="; ".join(check.invalid_commands),
+            )
+        return self._executor.execute(tool_name, params)

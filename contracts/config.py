@@ -52,6 +52,7 @@ class GuardrailsConfig:
     post_llm_enabled: bool
     max_input_length: int  # 1000
     max_retries_on_block: int  # 2
+    embedding_similarity_threshold: float  # 0.82
 
 
 @dataclass
