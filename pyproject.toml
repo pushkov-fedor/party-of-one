@@ -1,0 +1,36 @@
+[project]
+name = "party-of-one"
+version = "0.1.0"
+description = "Solo RPG with AI agents — DM + 2 companions, Cairn rules"
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.0",
+    "chromadb>=0.5",
+    "sentence-transformers>=3.0",
+    "tiktoken>=0.7",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "structlog>=24.0",
+    "python-dotenv>=1.0",
+    "textual>=0.80",
+    "rich>=13.0",
+    "pyyaml>=6.0",
+    "sqlalchemy>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/party_of_one"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

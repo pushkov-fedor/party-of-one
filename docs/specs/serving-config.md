@@ -54,8 +54,9 @@ python -m party_of_one.cli --watch --rounds 30
 # LLM
 llm:
   provider: "openrouter"         # openrouter
-  model: "anthropic/claude-sonnet-4-20250514"   # основная модель для агентов (OpenRouter model id)
-  model_cheap: "anthropic/claude-haiku-3"       # для компрессии
+  model: "openai/gpt-4.1"                       # DM agent (tool use + narrative)
+  model_companion: "openai/gpt-4.1-mini"        # Companion agents (structured JSON, без tool use)
+  model_cheap: "openai/gpt-4.1-mini"            # History compression
   temperature_dm: 0.75
   temperature_companion: 0.65
   temperature_compressor: 0.2
@@ -79,7 +80,7 @@ context:
 
 # Session
 session:
-  db_path: "./data/sessions.db"
+  db_dir: "./data/sessions"        # директория, файл на сессию ({session_id}.db)
   auto_save_interval_turns: 5
 
 # Guardrails
@@ -179,39 +180,56 @@ model: "google/gemini-2.0-flash-001"
 ```
 party-of-one/
 ├── config.yaml
-├── requirements.txt
+├── pyproject.toml          # зависимости и метаданные (uv + .venv)
 ├── .env                    # секреты (в .gitignore)
+├── contracts/              # абстрактные интерфейсы (source of truth для API)
+│   ├── models.py           # dataclass-модели + enum'ы
+│   ├── world_state.py      # WorldStateDB ABC
+│   ├── tools.py            # ToolExecutor ABC
+│   ├── dm_agent.py         # DMAgent Protocol
+│   ├── companion.py        # CompanionAgent Protocol
+│   ├── orchestrator.py     # Orchestrator Protocol
+│   ├── config.py           # AppConfig структура
+│   └── dice.py             # roll_dice контракт
 ├── data/
 │   ├── cairn-srd-ru.md     # правила Cairn (перевод на русский)
 │   ├── companions.yaml     # преднастроенные профили компаньонов
 │   ├── chroma/             # vector store (в .gitignore)
-│   └── sessions.db         # SQLite (в .gitignore)
+│   └── sessions/           # SQLite файлы сессий (в .gitignore)
 ├── logs/
 │   └── session.jsonl       # логи (в .gitignore)
-├── docs/                   # документация (этот milestone)
+├── docs/                   # документация и спецификации
 ├── src/
 │   └── party_of_one/
 │       ├── __init__.py
-│       ├── cli.py           # TUI interface (Textual)
-│       ├── orchestrator.py  # Turn management
+│       ├── models.py        # dataclass-модели + enum'ы (реэкспорт из contracts + доп. свойства)
+│       ├── config.py        # Config loading
+│       ├── logger.py        # Structured logging
+│       ├── orchestrator.py  # Turn management, координация агентов
+│       ├── play.py          # Non-interactive CLI (для тестирования)
 │       ├── agents/
-│       │   ├── dm.py        # DM Agent
-│       │   ├── companion.py # Companion Agent
-│       │   └── watch_mode.py # Watch mode (дефолтное действие вместо игрока)
+│       │   ├── llm_client.py  # Общий LLM-клиент (retry, API key)
+│       │   ├── dm.py          # DM Agent
+│       │   └── companion.py   # Companion Agent
 │       ├── tools/
-│       │   ├── dice.py      # Dice roller
-│       │   └── world.py     # World state tools
+│       │   ├── dice.py            # Dice roller (локальный RNG)
+│       │   ├── tool_definitions.py # JSON-схемы tool use для DM
+│       │   └── world.py          # ToolExecutor (валидация + исполнение)
 │       ├── rag/
 │       │   ├── indexer.py   # Cairn SRD indexing
 │       │   └── retriever.py # Search
 │       ├── guardrails/
 │       │   ├── pre_llm.py   # Input filter
 │       │   └── post_llm.py  # Output filter
-│       ├── memory/
-│       │   ├── world_state.py  # SQLite CRUD
-│       │   ├── compressor.py   # History compression
-│       │   └── context.py      # Context builder
-│       ├── config.py        # Config loading
-│       └── logger.py        # Structured logging
+│       └── memory/
+│           ├── schema.py              # DDL-схема SQLite
+│           ├── world_state.py         # WorldStateDB — фасад (транзакции, snapshot, get_entity)
+│           ├── character_repo.py      # CharacterRepository (CRUD, damage, heal, inventory, gold)
+│           ├── location_repo.py       # LocationRepository (CRUD, connections, movement)
+│           ├── quest_repo.py          # QuestRepository (CRUD, status transitions)
+│           ├── event_repo.py          # EventRepository (append, query)
+│           ├── turn_repo.py           # TurnRepository (turns, compressed history)
+│           ├── compressor.py          # History compression
+│           └── context.py             # Context builder (сборка промптов)
 └── tests/
 ```

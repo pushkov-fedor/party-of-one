@@ -1,0 +1,47 @@
+# Party of One — конфигурация
+
+llm:
+  provider: "openrouter"
+  model: "openai/gpt-4.1"                         # DM agent (tool use + narrative)
+  model_companion: "openai/gpt-4.1-mini"         # Companion agents (structured JSON)
+  model_cheap: "openai/gpt-4.1-mini"             # History compression
+  temperature_dm: 0.75
+  temperature_companion: 0.65
+  temperature_compressor: 0.2
+  max_tokens_dm: 2000
+  max_tokens_companion: 400
+  timeout_seconds: 30
+  max_retries: 3
+
+rag:
+  embedding_model: "deepvk/USER-bge-m3"
+  vector_store_path: "./data/chroma"
+  top_k: 3
+  min_similarity: 0.3
+
+context:
+  compression_threshold_tokens: 3000
+  max_recent_turns: 8
+  max_recent_turns_companion: 5
+
+session:
+  db_dir: "./data/sessions"
+  auto_save_interval_turns: 5
+
+guardrails:
+  pre_llm_enabled: true
+  post_llm_enabled: true
+  max_input_length: 1000
+  max_retries_on_block: 2
+
+logging:
+  level: "INFO"
+  file: "./logs/session.jsonl"
+  log_prompts: true
+  log_responses: true
+
+game:
+  max_tool_calls_per_turn: 10
+  max_inventory_slots: 10
+  companion_profiles_path: "./data/companions.yaml"
+  cairn_srd_path: "./data/cairn-srd-ru.md"

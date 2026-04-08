@@ -70,7 +70,7 @@ Orchestrator управляет всеми агентами централизо
 | **Orchestrator** | Управляет порядком ходов, маршрутизирует данные между агентами, контролирует жизненный цикл сессии | Детерминированный код |
 | **DM-агент** | Нарратив, управление персонажами, применение правил, обновление мира через структурированные команды | LLM-агент |
 | **Companion-агент (×2)** | Решения за AI-персонажа, действия и диалоги в рамках профиля личности | LLM-агент |
-| **World State Store** | Персонажи (игрок, компаньоны, NPC), локации, предметы, квесты, события | SQLite |
+| **World State Store** | Единый источник истины о мире. Организован в доменные репозитории: Characters, Locations, Quests, Events, Turns. Каждый репозиторий отвечает за свой агрегат. Фасад WorldStateDB координирует транзакции и собирает snapshot | SQLite |
 | **RAG-модуль** | Индексация и поиск по правилам Cairn (русский перевод) | Локальный embedding (`USER-bge-m3`) + ChromaDB |
 | **Pre-LLM Guardrail** | Фильтрация ввода игрока на инъекции | Regex + проверка длины |
 | **Post-LLM Guardrail** | Leak detection (подстроки system prompt) + валидация команд (schema + БД) | Детерминированный код |
@@ -154,6 +154,28 @@ Sequence-диаграмма (взаимодействие компонентов
 ---
 
 ## 4. State / Memory / Context
+
+### Архитектура World State Store
+
+World State — единственный источник истины о мире (ADR-4). Внутренне организован по паттерну **Repository per aggregate**: вместо монолитного класса на все операции — набор доменных репозиториев, каждый отвечает за свой агрегат данных.
+
+| Репозиторий | Агрегат | Ответственность |
+|-------------|---------|----------------|
+| **CharacterRepository** | Characters | CRUD, damage/heal, stat damage/restore, inventory, fatigue, gold |
+| **LocationRepository** | Locations | CRUD, bidirectional connections, movement validation (connected_to) |
+| **QuestRepository** | Quests | CRUD, status transitions (active → completed/failed) |
+| **EventRepository** | Events | Append-only timeline, query by recency |
+| **TurnRepository** | Turns, CompressedHistory | Save/retrieve raw turns, compressed history |
+
+**WorldStateDB** — тонкий фасад поверх репозиториев:
+- Создаёт соединение с SQLite и передаёт его репозиториям
+- Предоставляет `transaction()` для атомарных батчей (все команды одного хода DM)
+- Предоставляет `get_entity()` — generic lookup по типу сущности
+- Собирает `snapshot()` — текстовое представление мира для LLM-промптов, агрегируя данные из нескольких репозиториев
+
+Репозитории не знают друг о друге. Кросс-агрегатная валидация (например, `create_character` проверяет, что `location_id` существует) проходит через фасад.
+
+Контракты модулей (абстрактные интерфейсы) описаны в `contracts/` — реализации наследуют от них, что даёт compile-time проверку полноты реализации.
 
 ### Три уровня памяти
 

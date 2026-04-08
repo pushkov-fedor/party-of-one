@@ -26,13 +26,24 @@ class Session:
 
 ### World State (SQLite)
 
+World State организован по паттерну **Repository per aggregate** (см. `docs/system-design.md`, секция «Архитектура World State Store»). Каждый агрегат хранится в своей таблице и управляется своим репозиторием. WorldStateDB — фасад, координирующий транзакции и snapshot.
+
+Строковые поля с фиксированным набором значений описаны как enum'ы — это даёт валидацию на уровне типов. Полные определения — в `contracts/models.py`.
+
 ```python
+class CharacterStatus(str, Enum):  # alive | dead | incapacitated | deprived | paralyzed | delirious
+class Disposition(str, Enum):      # friendly | neutral | hostile
+class CharacterRole(str, Enum):    # player | companion | npc
+class QuestStatus(str, Enum):      # active | completed | failed
+class EventType(str, Enum):        # combat | dialogue | discovery | quest | death
+class TurnRole(str, Enum):         # player | dm | companion_a | companion_b
+
 @dataclass
 class Character:  # все сущности: игрок, компаньоны, NPC, враги
     id: str
     name: str
     class_: str
-    role: str  # player | companion | npc
+    role: CharacterRole
     strength: int
     dexterity: int
     willpower: int
@@ -45,10 +56,10 @@ class Character:  # все сущности: игрок, компаньоны, N
     gold: int = 0
     inventory: list[InventoryItem] = field(default_factory=list)
     fatigue: int = 0  # каждая усталость занимает 1 слот инвентаря
-    status: str = "alive"  # alive | dead | incapacitated | deprived | paralyzed | delirious
+    status: CharacterStatus = CharacterStatus.ALIVE
     location_id: str = ""
     description: str = ""
-    disposition: str = ""  # friendly | neutral | hostile (в основном для NPC)
+    disposition: Disposition = Disposition.NEUTRAL
     notes: str = ""  # свободное поле для DM
 
 @dataclass
@@ -70,7 +81,7 @@ class Quest:
     id: str
     title: str
     description: str
-    status: str = "active"  # active | completed | failed
+    status: QuestStatus = QuestStatus.ACTIVE
     giver_character_id: str = ""
 
 @dataclass
@@ -78,14 +89,14 @@ class Event:
     id: int
     turn_number: int
     description: str
-    event_type: str  # combat | dialogue | discovery | quest | death
+    event_type: EventType
     created_at: datetime
 
 @dataclass
 class Turn:  # сырые ходы, нужны для восстановления сессии
     id: int
     turn_number: int
-    role: str  # player | dm | companion_a | companion_b
+    role: TurnRole
     content: str
     commands: list[dict] | None = None
     created_at: datetime
