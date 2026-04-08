@@ -302,4 +302,18 @@ TOOL_DEFINITIONS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_rules",
+            "description": "Поиск правил Cairn по запросу. Используй когда нужны правила боя, спасбросков, магии, снаряжения.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Поисковый запрос на русском языке"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
 ]

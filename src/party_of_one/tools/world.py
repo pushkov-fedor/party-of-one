@@ -9,6 +9,7 @@ from contracts.tools import ToolExecutor as ToolExecutorABC
 
 from party_of_one.memory.world_state import WorldStateDB
 from party_of_one.models import Disposition, ToolCallResult
+from party_of_one.rag.retriever import Retriever
 from party_of_one.tools.tool_definitions import TOOL_DEFINITIONS  # re-export
 
 
@@ -18,8 +19,9 @@ class ToolExecutor(ToolExecutorABC):
     MAX_COMMANDS_PER_TURN = 10
     MAX_DAMAGE_PER_CALL = 50
 
-    def __init__(self, db: WorldStateDB):
+    def __init__(self, db: WorldStateDB, retriever: Retriever | None = None):
         self.db = db
+        self._retriever = retriever
         self._handlers: dict[str, Any] = {
             "roll_dice": self._roll_dice,
             "get_entity": self._get_entity,
@@ -40,6 +42,7 @@ class ToolExecutor(ToolExecutorABC):
             "create_character": self._create_character,
             "create_quest": self._create_quest,
             "create_location": self._create_location,
+            "search_rules": self._search_rules,
         }
 
     def execute(self, tool_name: str, params: dict[str, Any]) -> ToolCallResult:
@@ -151,3 +154,15 @@ class ToolExecutor(ToolExecutorABC):
         loc = self.db.locations.create(name=name, description=description,
                                         connected_to=connected_to)
         return {"location_id": loc.id, "name": loc.name}
+
+    def _search_rules(self, query: str) -> dict:
+        if not self._retriever:
+            return {"chunks": [], "query": query}
+        result = self._retriever.search(query)
+        return {
+            "query": result.query,
+            "chunks": [
+                {"text": c.text, "section": c.section, "subsection": c.subsection}
+                for c in result.chunks
+            ],
+        }

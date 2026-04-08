@@ -13,6 +13,7 @@ from party_of_one.guardrails.pre_llm import PreLLMGuardrail
 from party_of_one.guardrails.post_llm import PostLLMGuardrail
 from party_of_one.logger import get_logger
 from party_of_one.memory.world_state import WorldStateDB
+from party_of_one.rag.retriever import Retriever
 from party_of_one.models import (
     CharacterStatus,
     CompanionProfile,
@@ -39,10 +40,10 @@ class Orchestrator(OrchestratorContract):
         db_dir = Path(config.session.db_dir)
         db_dir.mkdir(parents=True, exist_ok=True)
         self.db = WorldStateDB(str(db_dir / f"{self.session_id}.db"))
-        self.executor = ToolExecutor(self.db)
+        self.retriever = Retriever(config.rag)
+        self.executor = ToolExecutor(self.db, retriever=self.retriever)
         self.pre_guardrail = PreLLMGuardrail(config.guardrails)
         self.post_guardrail = PostLLMGuardrail(config.guardrails, db=self.db)
-        # Wrap executor with guardrail validation — validates BEFORE executing
         self._guarded_executor = _GuardedToolExecutor(self.executor, self.post_guardrail)
         self.dm = DMAgent(config.llm, tool_executor=self._guarded_executor)
         self.state = "awaiting_player"
@@ -177,6 +178,7 @@ class Orchestrator(OrchestratorContract):
         compressed_text = "\n".join(h.summary for h in compressed) if compressed else ""
         recent_turns = self.db.turns.get_recent(self.config.context.max_recent_turns)
 
+        # RAG: DM calls search_rules tool when needed (agent-driven)
         retries = self.config.guardrails.max_retries_on_block
         for attempt in range(1 + retries):
             dm_response = self.dm.generate(

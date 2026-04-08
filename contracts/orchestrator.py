@@ -56,6 +56,7 @@ class Orchestrator(Protocol):
         player_archetype: str,
         companion_choices: list[str],
         setting_description: str,
+        player_name: str = "Hero",
     ) -> DMResponse:
         """Initialize a new game session.
 
