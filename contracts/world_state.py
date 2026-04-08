@@ -234,6 +234,11 @@ class TurnRepository(ABC):
         ...
 
     @abstractmethod
+    def delete_turns_before(self, turn_number: int) -> None:
+        """Delete all turns with turn_number <= given value."""
+        ...
+
+    @abstractmethod
     def get_compressed_history(self) -> list[CompressedHistory]:
         """All compressed history summaries, oldest first."""
         ...

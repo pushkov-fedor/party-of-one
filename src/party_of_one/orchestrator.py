@@ -12,11 +12,13 @@ from party_of_one.config import AppConfig
 from party_of_one.guardrails.pre_llm import PreLLMGuardrail
 from party_of_one.guardrails.post_llm import PostLLMGuardrail
 from party_of_one.logger import get_logger
+from party_of_one.memory.compressor import HistoryCompressor
 from party_of_one.memory.world_state import WorldStateDB
 from party_of_one.rag.retriever import Retriever
 from party_of_one.models import (
     CharacterStatus,
     CompanionProfile,
+    CompressedHistory,
     DMResponse,
     RoundResult,
     Turn,
@@ -46,6 +48,7 @@ class Orchestrator(OrchestratorContract):
         self.post_guardrail = PostLLMGuardrail(config.guardrails, db=self.db)
         self._guarded_executor = _GuardedToolExecutor(self.executor, self.post_guardrail)
         self.dm = DMAgent(config.llm, tool_executor=self._guarded_executor)
+        self.compressor = HistoryCompressor(config, db=self.db)
         self.state = "awaiting_player"
         self.turn_number = 0
         self.round_number = 0
@@ -164,6 +167,9 @@ class Orchestrator(OrchestratorContract):
                 return RoundResult(round_number=self.round_number, turns=all_turns,
                                    dm_responses=dm_responses, session_ended=True, end_reason="tpk")
 
+        # Compression check after round
+        self._try_compress()
+
         self.state = "awaiting_player"
         return RoundResult(round_number=self.round_number, turns=all_turns,
                            dm_responses=dm_responses, actor_roles=actor_roles,
@@ -215,6 +221,28 @@ class Orchestrator(OrchestratorContract):
         self.db.turns.save_turn(dm_turn)
         return dm_response, dm_turn
 
+    def _try_compress(self):
+        """Run compression if working context exceeds threshold."""
+        recent = self.db.turns.get_recent(self.config.context.max_recent_turns * 3)
+        if self.compressor.should_compress(recent):
+            try:
+                result = self.compressor.compress(recent)
+                if result.compressed:
+                    # Save compressed summary
+                    self.db.turns.save_compressed_history(CompressedHistory(
+                        id=0, summary=result.summary,
+                        covers_turns_from=result.from_turn,
+                        covers_turns_to=result.to_turn,
+                    ))
+                    # Remove compressed turns from working context
+                    self.db.turns.delete_turns_before(result.to_turn)
+                    logger.info("compression_triggered",
+                                turn_number=self.turn_number,
+                                turns_compressed=result.turns_compressed)
+            except RuntimeError:
+                logger.warning("compression_failed_fallback",
+                               turn_number=self.turn_number)
+
     def _generate_companion_action(self, agent: CompanionAgent, character) -> str:
         compressed = self.db.turns.get_compressed_history()
         compressed_text = "\n".join(h.summary for h in compressed) if compressed else ""
@@ -247,13 +275,27 @@ class Orchestrator(OrchestratorContract):
         return bool(party) and all(c.status in tpk_statuses for c in party)
 
     def _restore_state(self):
+        # Restore turn_number from latest turn or compressed history
         turns = self.db.turns.get_recent(1)
+        compressed = self.db.turns.get_compressed_history()
         if turns:
             self.turn_number = turns[-1].turn_number
             self.state = "awaiting_player"
-        # Считаем раунды по количеству ходов игрока
-        all_turns = self.db.turns.get_recent(1000)
-        self.round_number = sum(1 for t in all_turns if t.role == TurnRole.PLAYER)
+        elif compressed:
+            self.turn_number = compressed[-1].covers_turns_to
+            self.state = "awaiting_player"
+
+        # Round number: count player turns in remaining + compressed
+        remaining_player = sum(
+            1 for t in self.db.turns.get_recent(1000)
+            if t.role == TurnRole.PLAYER
+        )
+        compressed_player = sum(
+            # Estimate: ~1 player turn per 6 compressed turns
+            max(1, (h.covers_turns_to - h.covers_turns_from + 1) // 6)
+            for h in compressed
+        )
+        self.round_number = remaining_player + compressed_player
         companions = self.db.characters.list(role="companion")
         if companions:
             self._all_profiles = load_companion_profiles(self.config.game.companion_profiles_path)

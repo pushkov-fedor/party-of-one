@@ -35,7 +35,7 @@ class RAGConfig:
 
 @dataclass
 class ContextConfig:
-    compression_threshold_tokens: int  # 3000
+    compression_threshold_tokens: int  # 8000
     max_recent_turns: int  # 8
     max_recent_turns_companion: int  # 5
 

@@ -35,6 +35,14 @@ class TurnRepository(TurnRepositoryABC):
         ).mappings().fetchall()
         return [self._to_turn(r) for r in reversed(rows)]
 
+    def delete_turns_before(self, turn_number: int) -> None:
+        """Delete all turns with turn_number <= given value."""
+        from sqlalchemy import delete
+        self._s.conn.execute(
+            delete(turns).where(turns.c.turn_number <= turn_number)
+        )
+        self._s.auto_commit()
+
     def save_compressed_history(self, history: CompressedHistory) -> None:
         now = datetime.now(timezone.utc).isoformat()
         self._s.conn.execute(insert(compressed_history).values(

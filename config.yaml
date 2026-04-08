@@ -20,7 +20,7 @@ rag:
   min_similarity: 0.3
 
 context:
-  compression_threshold_tokens: 3000
+  compression_threshold_tokens: 8000
   max_recent_turns: 8
   max_recent_turns_companion: 5
 
