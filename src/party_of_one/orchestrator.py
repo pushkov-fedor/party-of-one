@@ -272,7 +272,11 @@ class Orchestrator(OrchestratorContract):
     def _check_tpk(self) -> bool:
         party = self.db.characters.list(role="player") + self.db.characters.list(role="companion")
         tpk_statuses = (CharacterStatus.DEAD, CharacterStatus.INCAPACITATED)
-        return bool(party) and all(c.status in tpk_statuses for c in party)
+        # Check both status AND hp<=0 (DM may forget to update status)
+        return bool(party) and all(
+            c.status in tpk_statuses or c.hp <= 0
+            for c in party
+        )
 
     def _restore_state(self):
         # Restore turn_number from latest turn or compressed history
