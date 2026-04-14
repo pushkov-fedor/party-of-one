@@ -106,7 +106,7 @@ class CharacterRepository(CharacterRepositoryABC):
             self._set(character_id, hp=0)
             self._s.auto_commit()
             return DamageResult(new_hp=0, requires_scar_roll=True)
-        # HP < 0 → overflow to STR
+        # HP < 0 → overflow to STR, auto-incapacitate
         self._set(character_id, hp=0)
         overflow = abs(new_hp)
         new_str = char.strength - overflow
@@ -114,7 +114,8 @@ class CharacterRepository(CharacterRepositoryABC):
             self._set(character_id, strength=0, status=CharacterStatus.DEAD.value)
             self._s.auto_commit()
             return DamageResult(new_hp=0, new_strength=0, character_died=True)
-        self._set(character_id, strength=new_str)
+        self._set(character_id, strength=new_str,
+                  status=CharacterStatus.INCAPACITATED.value)
         self._s.auto_commit()
         return DamageResult(new_hp=0, new_strength=new_str, requires_str_save=True)
 
@@ -127,7 +128,11 @@ class CharacterRepository(CharacterRepositoryABC):
         if char.status == CharacterStatus.DEPRIVED:
             raise ValueError(f"Character '{character_id}' is deprived — cannot heal")
         new_hp = min(char.hp + amount, char.max_hp)
-        self._set(character_id, hp=new_hp)
+        updates = {"hp": new_hp}
+        # Auto-reset incapacitated status on heal
+        if char.status == CharacterStatus.INCAPACITATED and new_hp > 0:
+            updates["status"] = CharacterStatus.ALIVE.value
+        self._set(character_id, **updates)
         self._s.auto_commit()
         return new_hp
 

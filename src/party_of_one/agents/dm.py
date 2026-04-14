@@ -92,6 +92,7 @@ class DMAgent(DMAgentContract):
         return self._tool_use_loop(messages)
 
     _RETRY_MSG = "Ты не дал ответа. Опиши что происходит в мире — 2-4 предложения."
+    _MAX_TOOL_CALLS = 6
 
     def _tool_use_loop(self, messages: list[dict], max_rounds: int = 20) -> DMResponse:
         all_tool_calls: list[dict] = []
@@ -99,6 +100,10 @@ class DMAgent(DMAgentContract):
         max_empty_retries = 3
 
         for _ in range(max_rounds):
+            if len(all_tool_calls) >= self._MAX_TOOL_CALLS:
+                logger.info("dm_tool_limit_reached", count=len(all_tool_calls))
+                break
+
             response = call_with_retry(
                 self.client, model=self.config.model, messages=messages,
                 temperature=self.config.temperature_dm,
@@ -123,14 +128,13 @@ class DMAgent(DMAgentContract):
                     messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result_str})
                 continue
 
-            # Empty narrative — retry instead of returning silence
+            # Empty narrative — retry
             if not parsed.narrative or not parsed.narrative.strip():
                 empty_retries += 1
                 if empty_retries <= max_empty_retries:
                     logger.warning("dm_empty_narrative_retry", attempt=empty_retries)
                     messages.append({"role": "user", "content": self._RETRY_MSG})
                     continue
-                # Exhausted retries — return fallback
                 logger.warning("dm_empty_narrative_fallback", attempts=empty_retries)
                 parsed.narrative = "*Тишина повисает в воздухе...*"
 

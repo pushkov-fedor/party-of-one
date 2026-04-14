@@ -394,6 +394,17 @@ class _GuardedToolExecutor:
                     tool_name=tool_name, success=False,
                     error="Нельзя нанести урон без броска. Сначала вызови roll_dice.",
                 )
+            # Reject damage on incapacitated/dead targets
+            target_id = params.get("character_id", "")
+            try:
+                target = self._executor.db.characters.get(target_id)
+                if target.status in SKIP_STATUSES:
+                    return ToolCallResult(
+                        tool_name=tool_name, success=False,
+                        error=f"Персонаж {target.name} без сознания/мёртв, нельзя нанести урон.",
+                    )
+            except (KeyError, TypeError, AttributeError):
+                pass
             # Validate armor subtraction
             amount = params.get("amount", 0)
             target_id = params.get("character_id", "")

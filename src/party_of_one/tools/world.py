@@ -75,7 +75,22 @@ class ToolExecutor(ToolExecutorABC):
     def _roll_dice(self, sides: int, count: int = 1) -> dict:
         from party_of_one.tools.dice import roll_dice
         r = roll_dice(sides, count)
-        return {"rolls": r.rolls, "total": r.total}
+        result: dict = {"rolls": r.rolls, "total": r.total}
+        # For d20 (save throws), add interpretation hints
+        if sides == 20 and count == 1:
+            hints = []
+            try:
+                for c in self.db.characters.get_all():
+                    if c.status.value in ("dead", "incapacitated"):
+                        continue
+                    for stat, val in [("STR", c.strength), ("DEX", c.dexterity), ("WIL", c.willpower)]:
+                        outcome = "УСПЕХ" if r.total <= val else "ПРОВАЛ"
+                        hints.append(f"{c.name} {stat} {val}: {outcome} ({r.total} {'≤' if r.total <= val else '>'} {val})")
+            except Exception:
+                pass
+            if hints:
+                result["save_hints"] = "; ".join(hints)
+        return result
 
     def _get_entity(self, type: str, id: str) -> dict:
         entity = self.db.get_entity(type, id)

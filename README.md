@@ -49,7 +49,7 @@ docker run -e OPENROUTER_API_KEY=sk-or-... party-of-one party_of_one.eval \
   --dm-model qwen/qwen3-max \
   --companion-model qwen/qwen3-235b-a22b-2507 \
   --judge-model anthropic/claude-sonnet-4.6 \
-  --output /dev/stdout
+  --output eval/results/eval_results.json
 
 ```
 
@@ -75,7 +75,7 @@ python -m party_of_one.eval --mode watch --rounds 10 \
   --companion-model qwen/qwen3-235b-a22b-2507 \
   --judge-model anthropic/claude-sonnet-4.6 \
   --save-log eval/data/session_log.json \
-  --output eval_results.json
+  --output eval/results/eval_results.json
 
 # Тесты
 python -m pytest tests/ -q
@@ -108,14 +108,14 @@ python -m pytest tests/ -q
 
 **Holistic** — progression 4/5, diversity 4/5, reactivity 3/5, narrative 3/5
 
-**Сравнение моделей** — 8 прогонов в `eval_results_*.json`:
+**Сравнение моделей** — 8 прогонов в `eval/results/eval_results_*.json`:
 
 | Конфигурация | DM plot | DM rules | Companion variety | Файл |
 |-------------|---------|----------|-------------------|------|
-| **Qwen3 Max + Qwen3-235B** | **4** | 2 | **4** | `eval_results_qwen_v4_armor.json` |
-| GPT-4.1 + GPT-4.1-mini | 3 | 2 | 2 | `eval_results_baseline.json` |
-| DeepSeek V3.2 + Qwen3-235B | 3 | 2 | 3 | `eval_results_ds_qwen.json` |
-| GPT-5 + Qwen3-235B | 2 | 1 | 2 | `eval_results_gpt5_qwen.json` |
+| **Qwen3 Max + Qwen3-235B** | **4** | 2 | **4** | `eval/results/eval_results_qwen_v4_armor.json` |
+| GPT-4.1 + GPT-4.1-mini | 3 | 2 | 2 | `eval/results/eval_results_baseline.json` |
+| DeepSeek V3.2 + Qwen3-235B | 3 | 2 | 3 | `eval/results/eval_results_ds_qwen.json` |
+| GPT-5 + Qwen3-235B | 2 | 1 | 2 | `eval/results/eval_results_gpt5_qwen.json` |
 
 ## Что PoC не делает
 
