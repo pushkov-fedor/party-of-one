@@ -1,5 +1,3 @@
-<!-- /home/fedor/Study/lectures/Bonus_Track_LLM_Agentic_AI_2025-2026/README.md -->
-
 # Party of One — AI Dungeon Master & Companions
 
 ## Задача
@@ -43,7 +41,7 @@ docker pull ghcr.io/pushkov-fedor/party-of-one:latest
 # Интерактивная игра (Textual TUI — выбор класса, компаньонов, мира)
 docker run -it -e OPENROUTER_API_KEY=sk-or-... ghcr.io/pushkov-fedor/party-of-one
 
-# Watch mode (AI играет сама, бесконечно до TPK)
+# Watch mode (AI играет сама, бесконечно до смерти всей команды)
 docker run -it -e OPENROUTER_API_KEY=sk-or-... ghcr.io/pushkov-fedor/party-of-one party_of_one --watch
 
 # Watch mode с лимитом раундов
@@ -94,9 +92,9 @@ python -m party_of_one.eval --mode watch --rounds 10 \
 python -m pytest tests/ -q
 ```
 
-### Результаты eval (лучшая конфигурация: Qwen3 Max + Qwen3-235B, judge: Claude Sonnet 4.6)
+### Результаты eval (Qwen3 Max + Qwen3-235B, judge: Claude Sonnet 4.6)
 
-**RAG retriever** — 93.3% hit rate (111/119), MRR 0.867
+**RAG retriever** — 90.8% hit rate (108/119), MRR 0.843
 
 **Guardrails (embedding)** — 98.0% true positive, 0% false positive (49 инъекций, 57 легитимных)
 
@@ -104,31 +102,36 @@ python -m pytest tests/ -q
 
 | Критерий | Оценка | Описание |
 |----------|--------|----------|
-| Plot progression | **4**/5 | Сюжет движется: поляна → лес → бой с гоблинами → пленный → раскрытие угрозы → финальная схватка |
-| Adaptivity | **3**/5 | DM реагирует на действия компаньонов, но иногда генерирует события независимо |
-| Repetition | **3**/5 | Меньше повторений, но механические вставки рвут атмосферу |
-| Consistency | **2**/5 | Временные несостыковки, сущности создаются после упоминания |
-| Rules | **2**/5 | Спасброски и урон иногда применяются некорректно |
+| Plot progression | **2-3**/5 | Сюжет движется, но DM иногда игнорирует решения компаньонов |
+| Adaptivity | **2**/5 | DM реагирует на действия, но часто генерирует события независимо от контекста |
+| Repetition | **2-3**/5 | Структурные повторы в нарративе |
+| Consistency | **2**/5 | ID-путаница (создаёт NPC с одним ID, бьёт по другому), нарратив расходится с world state |
+| Rules | **2**/5 | Armor не применяется, спасброски пропускаются, враги бьют нескольких за ход |
 
 **Companion eval** (batched per-companion, шкала 1-5):
 
 | Критерий | Бранка | Тихомир |
 |----------|--------|---------|
-| In-character | **4**/5 | **4**/5 |
-| Agency | **4**/5 | **3**/5 |
-| Variety | **4**/5 | **4**/5 |
-| Liveliness | **3**/5 | **3**/5 |
+| In-character | **5**/5 | **4**/5 |
+| Agency | **3-4**/5 | **2-3**/5 |
+| Variety | **3-4**/5 | **2-3**/5 |
+| Liveliness | **4-5**/5 | **4**/5 |
 
-**Holistic** — progression 4/5, diversity 4/5, reactivity 3/5, narrative 3/5
+**Holistic** — progression 2-3/5, diversity 3-4/5, reactivity 2/5, narrative 3/5
 
-**Сравнение моделей** — 8 прогонов в `eval/results/eval_results_*.json`:
+**Известные проблемы DM (требуют code-level game engine):**
+- DM не ставит armor при create_character, даже если выдаёт доспехи — партия умирает за 2-3 раунда
+- Враги атакуют 2-3 цели за ход вместо одной
+- STR save при HP=0 пропускается — сразу incapacitated
+- DM путает ID сущностей между ходами
 
-| Конфигурация | DM plot | DM rules | Companion variety | Файл |
-|-------------|---------|----------|-------------------|------|
-| **Qwen3 Max + Qwen3-235B** | **4** | 2 | **4** | `eval/results/eval_results_qwen_v4_armor.json` |
-| GPT-4.1 + GPT-4.1-mini | 3 | 2 | 2 | `eval/results/eval_results_baseline.json` |
-| DeepSeek V3.2 + Qwen3-235B | 3 | 2 | 3 | `eval/results/eval_results_ds_qwen.json` |
-| GPT-5 + Qwen3-235B | 2 | 1 | 2 | `eval/results/eval_results_gpt5_qwen.json` |
+**Сравнение моделей** — прогоны в `eval/results/`:
+
+| Конфигурация | DM plot | DM rules | Companion character | Файл |
+|-------------|---------|----------|---------------------|------|
+| **Qwen3 Max + Qwen3-235B** | **2-3** | 2 | **5** | `eval_results_final_v2.json` |
+| GPT-4.1 + GPT-4.1-mini | 3 | 2 | 4 | `eval_results_baseline.json` |
+| DeepSeek V3.2 + Qwen3-235B | 3 | 2 | 3 | `eval_results_ds_qwen.json` |
 
 ## Что PoC не делает
 
