@@ -13,7 +13,7 @@ def main():
     else:
         # TUI mode (default)
         watch = "--watch" in args
-        rounds = 30
+        rounds = 0  # 0 = infinite
         for i, a in enumerate(args):
             if a == "--rounds" and i + 1 < len(args):
                 rounds = int(args[i + 1])

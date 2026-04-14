@@ -326,11 +326,21 @@ class GameApp(App):
 
     def _begin_setup(self) -> None:
         if self.watch_mode:
-            self._selected_archetype = self._archetypes[0]
-            self._selected_companions = [self._profiles[0].name, self._profiles[1].name]
-            log = self.query_one("#narrative", RichLog)
-            log.write("[dim]⏳ Watch mode — Мастер подземелий готовит сцену...[/dim]\n")
-            self._start_game("Мрачное средневековое фэнтези")
+            # No player in watch mode — skip archetype, go to companions
+            self._selected_archetype = "Воин"  # placeholder, not used
+            items = [
+                f"{p.name} ({p.class_}) — {p.personality.traits[0]}"
+                for p in self._profiles
+            ]
+            self.push_screen(
+                SelectionScreen(
+                    "⚔ Party of One — Watch ⚔",
+                    "Выберите двух спутников  (Enter — выбрать)",
+                    items,
+                    multi=2,
+                ),
+                callback=self._on_companions_selected,
+            )
             return
 
         self.push_screen(
@@ -392,7 +402,7 @@ class GameApp(App):
         from party_of_one.logger import setup_logging
         setup_logging(log_file=self.config.logging.file, level=self.config.logging.level)
 
-        self.orchestrator = Orchestrator(self.config)
+        self.orchestrator = Orchestrator(self.config, watch_mode=self.watch_mode)
         dm_response = self.orchestrator.init_game(
             player_name="Герой",
             player_archetype=self._selected_archetype,
@@ -482,6 +492,10 @@ class GameApp(App):
             "companion_a": self._selected_companions[0] if len(self._selected_companions) > 0 else "Спутник",
             "companion_b": self._selected_companions[1] if len(self._selected_companions) > 1 else "Спутник",
         }
+        companion_colors = {
+            "companion_a": "#c77dff",
+            "companion_b": "#ff6b9d",
+        }
 
         for actor_role, dm_resp in zip(result.actor_roles, result.dm_responses):
             role_val = actor_role.value
@@ -489,36 +503,36 @@ class GameApp(App):
             # Companion speech
             if role_val in result.companion_texts:
                 name = companion_names.get(role_val, role_val)
+                color = companion_colors.get(role_val, "#c77dff")
                 self.call_from_thread(
                     self.query_one("#narrative", RichLog).write,
-                    f"\n[bold #c77dff]🛡 {name}:[/bold #c77dff] "
-                    f"[italic #d4a0ff]{result.companion_texts[role_val]}[/italic #d4a0ff]",
+                    f"\n[bold {color}]🛡 {name}:[/bold {color}] "
+                    f"[italic {color}]{result.companion_texts[role_val]}[/italic {color}]",
                 )
 
             # DM narrative
             if role_val == "player":
                 self.call_from_thread(
                     self.query_one("#narrative", RichLog).write,
-                    f"\n[bold #d4a017]☠ Мастер:[/bold #d4a017]\n"
+                    f"\n[bold italic #d4a017]☠ Мастер:[/bold italic #d4a017]\n"
                     f"[#c0c0d0]{dm_resp.narrative}[/#c0c0d0]\n",
                 )
             else:
                 name = companion_names.get(role_val, role_val)
                 self.call_from_thread(
                     self.query_one("#narrative", RichLog).write,
-                    f"\n[bold #d4a017]☠ Мастер[/bold #d4a017] [dim]→ {name}[/dim][bold #d4a017]:[/bold #d4a017]\n"
+                    f"\n[bold italic #d4a017]☠ Мастер[/bold italic #d4a017] [dim]→ {name}[/dim][bold #d4a017]:[/bold #d4a017]\n"
                     f"[#c0c0d0]{dm_resp.narrative}[/#c0c0d0]\n",
                 )
 
-        # Tool calls — show real calls
-        for dm_resp in result.dm_responses:
+            # Tool calls per DM response — bright color
             for tc in dm_resp.tool_calls:
-                name = tc.get("name", "?")
-                args = tc.get("args", {})
-                args_short = ", ".join(f"{k}={v}" for k, v in list(args.items())[:3])
+                tc_name = tc.get("name", "?")
+                tc_args = tc.get("args", {})
+                args_short = ", ".join(f"{k}={v}" for k, v in list(tc_args.items())[:3])
                 self.call_from_thread(
                     self.query_one("#narrative", RichLog).write,
-                    f"[dim]⚙ {name}({args_short})[/dim]",
+                    f"[bold #6ecfff]⚙ {tc_name}[/bold #6ecfff][#6ecfff]({args_short})[/#6ecfff]",
                 )
 
         self.call_from_thread(
@@ -546,40 +560,66 @@ class GameApp(App):
 
     @work(thread=True)
     def _run_watch_mode(self) -> None:
-        for i in range(self.watch_rounds):
+        companion_names = {
+            "companion_a": self._selected_companions[0] if len(self._selected_companions) > 0 else "Спутник",
+            "companion_b": self._selected_companions[1] if len(self._selected_companions) > 1 else "Спутник",
+        }
+        companion_colors = {
+            "companion_a": "#c77dff",
+            "companion_b": "#ff6b9d",
+        }
+        round_num = 0
+        max_rounds = self.watch_rounds if self.watch_rounds > 0 else None
+
+        while True:
             if self.orchestrator.is_ended:
                 break
+            if max_rounds and round_num >= max_rounds:
+                break
+            round_num += 1
+
+            label = f"Раунд {round_num}" if not max_rounds else f"Раунд {round_num}/{max_rounds}"
             self.call_from_thread(
                 self.query_one("#narrative", RichLog).write,
-                f"\n[dim]── Раунд {i + 1}/{self.watch_rounds} ──[/dim]",
+                f"\n[dim]── {label} ──[/dim]",
             )
             result = self.orchestrator.process_watch_round()
-            role_labels = {
-                "companion_a": "🛡 Компаньон A",
-                "companion_b": "🛡 Компаньон B",
-            }
+
             for actor_role, dm_resp in zip(result.actor_roles, result.dm_responses):
                 role_val = actor_role.value
                 if role_val in result.companion_texts:
-                    label = role_labels.get(role_val, role_val)
+                    name = companion_names.get(role_val, role_val)
+                    color = companion_colors.get(role_val, "#a0a0c0")
                     self.call_from_thread(
                         self.query_one("#narrative", RichLog).write,
-                        f"\n[italic #8888aa]{label}:[/italic #8888aa] [#a0a0c0]{result.companion_texts[role_val]}[/#a0a0c0]",
+                        f"\n[bold {color}]🛡 {name}:[/bold {color}] "
+                        f"[italic {color}]{result.companion_texts[role_val]}[/italic {color}]",
                     )
                 self.call_from_thread(
                     self.query_one("#narrative", RichLog).write,
                     f"\n[bold italic #d4a017]☠ Мастер:[/bold italic #d4a017] [#c0c0d0]{dm_resp.narrative}[/#c0c0d0]",
                 )
+                # Tool calls — bright color per DM response
+                for tc in dm_resp.tool_calls:
+                    tc_name = tc.get("name", "?")
+                    tc_args = tc.get("args", {})
+                    args_short = ", ".join(f"{k}={v}" for k, v in list(tc_args.items())[:3])
+                    self.call_from_thread(
+                        self.query_one("#narrative", RichLog).write,
+                        f"[bold #6ecfff]⚙ {tc_name}[/bold #6ecfff][#6ecfff]({args_short})[/#6ecfff]",
+                    )
+
             self.call_from_thread(
                 self.query_one("#sidebar", PartySidebar).update_party,
                 self.orchestrator,
             )
             self.call_from_thread(
                 setattr, self, "sub_title",
-                f"Watch: {i + 1}/{self.watch_rounds}",
+                f"Watch: {label}",
             )
             if result.session_ended:
                 break
+
         self.call_from_thread(
             self.query_one("#narrative", RichLog).write,
             "\n[bold #e2b714]Watch mode завершён.[/bold #e2b714]",

@@ -36,8 +36,9 @@ SKIP_STATUSES = frozenset({
 
 
 class Orchestrator(OrchestratorContract):
-    def __init__(self, config: AppConfig, session_id: str | None = None):
+    def __init__(self, config: AppConfig, session_id: str | None = None, watch_mode: bool = False):
         self.config = config
+        self.watch_mode = watch_mode
         self.session_id = session_id or f"game_{__import__('uuid').uuid4().hex[:8]}"
         db_dir = Path(config.session.db_dir)
         db_dir.mkdir(parents=True, exist_ok=True)
@@ -73,7 +74,11 @@ class Orchestrator(OrchestratorContract):
 
         self._all_profiles = load_companion_profiles(self.config.game.companion_profiles_path)
         start_loc = self.db.locations.create_initial("Starting Area", "")
-        player = self._create_party_member(player_name, "player", player_archetype, start_loc.id)
+
+        if not self.watch_mode:
+            player = self._create_party_member(player_name, "player", player_archetype, start_loc.id)
+        else:
+            player = None
 
         selected_profiles = []
         for choice_name in companion_choices:
@@ -82,6 +87,11 @@ class Orchestrator(OrchestratorContract):
             comp = self._create_party_member(profile.name, "companion", profile.class_, start_loc.id)
             self._companion_char_ids.append(comp.id)
             self._companion_agents.append(CompanionAgent(self.config.llm, profile))
+
+        # In watch mode, use first companion as party leader for init prompt
+        if player is None:
+            first_comp = self.db.characters.get(self._companion_char_ids[0])
+            player = first_comp
 
         dm_response = self.dm.generate_init(
             setting_description=setting_description,
@@ -164,7 +174,7 @@ class Orchestrator(OrchestratorContract):
                            session_ended=False)
 
     def process_watch_round(self) -> RoundResult:
-        """Process one watch-mode round (companions only, no player turn)."""
+        """Process one watch-mode round (companions only, no player)."""
         if self.state != "awaiting_player":
             raise RuntimeError(f"Cannot process round in state {self.state}")
 
@@ -323,7 +333,10 @@ class Orchestrator(OrchestratorContract):
         raise ValueError(f"Companion profile '{name}' not found")
 
     def _check_tpk(self) -> bool:
-        party = self.db.characters.list(role="player") + self.db.characters.list(role="companion")
+        if self.watch_mode:
+            party = self.db.characters.list(role="companion")
+        else:
+            party = self.db.characters.list(role="player") + self.db.characters.list(role="companion")
         tpk_statuses = (CharacterStatus.DEAD, CharacterStatus.INCAPACITATED)
         # Check both status AND hp<=0 (DM may forget to update status)
         return bool(party) and all(
