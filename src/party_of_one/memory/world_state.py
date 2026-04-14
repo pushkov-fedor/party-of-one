@@ -108,7 +108,9 @@ class WorldStateDB(WorldStateDBABC):
                 if inv:
                     line += f" | {inv} [{c.occupied_slots}/10 слотов]"
                 if c.status != CharacterStatus.ALIVE:
-                    line += f" [{c.status.value}]"
+                    line += f" ⚠️ [{c.status.value} — НЕ МОЖЕТ ДЕЙСТВОВАТЬ]"
+                elif c.hp == 0:
+                    line += f" ⚠️ [HP=0 — БЕЗ СОЗНАНИЯ]"
                 lines.append(line)
             lines.append("")
 

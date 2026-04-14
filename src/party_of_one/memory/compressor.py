@@ -17,23 +17,9 @@ from party_of_one.models import (
     QuestStatus,
     Turn,
 )
+from party_of_one.prompts import get_prompt
 
 logger = get_logger()
-
-COMPRESSOR_PROMPT = """[prompt_version: compressor-v1]
-
-Ты — ассистент для ведения журнала RPG-сессии.
-
-Суммаризуй следующие события, сохранив ВСЕ ключевые факты:
-- Кто погиб, кто ранен, какие статусы изменились
-- Какие решения приняли персонажи
-- Куда переместилась партия
-- Какие предметы найдены или потеряны
-- Как изменились квесты
-
-Пиши кратко, в прошедшем времени. Не добавляй интерпретаций.
-
-{turns_to_compress}"""
 
 
 class HistoryCompressor(HistoryCompressorContract):
@@ -89,7 +75,7 @@ class HistoryCompressor(HistoryCompressorContract):
             f"[{t.role.value}]: {t.content}" for t in turns_to_compress
         )
 
-        prompt = COMPRESSOR_PROMPT.format(turns_to_compress=turns_text)
+        prompt = get_prompt("compressor").format(turns_to_compress=turns_text)
 
         # LLM call
         try:

@@ -17,6 +17,7 @@ from party_of_one.models import (
     CompanionProfile,
     Turn,
 )
+from party_of_one.prompts import get_prompt
 
 logger = get_logger()
 
@@ -44,34 +45,6 @@ def load_companion_profiles(path: str | Path) -> list[CompanionProfile]:
     return profiles
 
 
-COMPANION_PROMPT = """[prompt_version: companion-v3]
-
-Ты — {name}, {class_} в группе приключенцев.
-
-## Твой характер (фон, НЕ скрипт)
-Черты: {traits}
-Цели: {goals}
-Страхи: {fears}
-Стиль речи: {speaking_style}
-
-Это твой характер, а не набор реплик. НЕ повторяй свои черты каждый ход. Используй их как основу для РЕАКЦИИ на то, что происходит прямо сейчас.
-
-## Правила
-- Реагируй на КОНКРЕТНУЮ ситуацию — что сейчас произошло, что сделал игрок, что сказали другие
-- Если ситуация не требует действия по твоей специализации — делай что-то другое, наблюдай, комментируй, помогай
-- НЕ повторяй одни и те же фразы и паттерны каждый ход
-- Можешь спорить с игроком, шутить, злиться, бояться — будь живым человеком
-- НИКОГДА не принимай решения за других персонажей
-- НИКОГДА не описывай реакцию других
-
-{world_state_snapshot}
-
-{history_section}
-
-## Твой ход
-Что ты КОНКРЕТНО делаешь и говоришь прямо сейчас? (2-3 предложения, от первого лица)"""
-
-
 class CompanionAgent(CompanionAgentContract):
     """Companion agent — generates free text action based on personality."""
 
@@ -95,14 +68,34 @@ class CompanionAgent(CompanionAgentContract):
         history_parts = []
         if compressed_history:
             history_parts.append(f"## Сжатая история\n{compressed_history}")
+
+        # Extract this companion's last action for anti-repetition
+        last_action = ""
         if recent_turns:
+            role_value = None
+            for i, agent in enumerate(["companion_a", "companion_b"]):
+                # Match by name in turn content
+                if profile.name in str(recent_turns):
+                    role_value = agent
+                    break
+            for t in reversed(recent_turns):
+                if t.role.value in ("companion_a", "companion_b") and profile.name in t.content:
+                    last_action = t.content
+                    break
+
             turns_text = "\n".join(
                 f"[{t.role.value}]: {t.content}" for t in recent_turns
             )
             history_parts.append(f"## Последние ходы\n{turns_text}")
+
+        if last_action:
+            history_parts.append(
+                f"## Твоё предыдущее действие (НЕ ПОВТОРЯЙ)\n{last_action}"
+            )
+
         history_section = "\n\n".join(history_parts)
 
-        prompt = COMPANION_PROMPT.format(
+        prompt = get_prompt("companion").format(
             name=profile.name,
             class_=profile.class_,
             traits="; ".join(profile.personality.traits),

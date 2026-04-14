@@ -12,7 +12,10 @@ from contracts.models import *
 
 @dataclass
 class RoundResult:
-    """Outcome of a single game round (player + all companions)."""
+    """Outcome of a single game round.
+
+    In normal mode: player + companions. In watch mode: companions only.
+    """
 
     round_number: int
     turns: list[Turn]
@@ -31,16 +34,25 @@ class Orchestrator(Protocol):
     assembles context, enforces turn order, applies guardrails,
     and checks stop conditions.
 
-    Turn order per round:
+    Turn order per round (normal mode):
         1. Player action  -> DM processes -> narrative
         2. Companion A    -> DM processes -> narrative
         3. Companion B    -> DM processes -> narrative
 
+    Turn order per round (watch mode, ``process_watch_round``):
+        1. Companion A    -> DM processes -> narrative
+        2. Companion B    -> DM processes -> narrative
+
     A companion's turn is skipped if its status is ``dead``,
     ``incapacitated``, ``paralyzed``, or ``delirious``.
 
-    State transitions:
+    State transitions (normal):
         awaiting_player -> processing_player_turn -> awaiting_companion_a
+        -> processing_companion_a_turn -> awaiting_companion_b
+        -> processing_companion_b_turn -> round_complete -> awaiting_player
+
+    State transitions (watch):
+        awaiting_player -> awaiting_companion_a
         -> processing_companion_a_turn -> awaiting_companion_b
         -> processing_companion_b_turn -> round_complete -> awaiting_player
 
@@ -123,5 +135,28 @@ class Orchestrator(Protocol):
             RuntimeError: Only on truly unrecoverable errors (e.g. DB
                 corruption).  Normal LLM failures are handled internally
                 via retry/fallback and reported in ``RoundResult``.
+        """
+        ...
+
+    def process_watch_round(self) -> RoundResult:
+        """Process one watch-mode round (companions only, no player turn).
+
+        For each alive companion in turn order:
+        1. Generate companion action via CompanionAgent.
+        2. Send to DM Agent for processing and narrative.
+        3. Run post-LLM guardrail on DM output.
+        4. Validate and execute tool calls.
+        5. Save turns to database.
+        6. Check stop conditions (TPK).
+        7. Trigger compression if threshold exceeded.
+
+        No player action is processed. No pre-LLM guardrail is run.
+        ``actor_roles`` in the result will only contain companion roles.
+
+        Returns:
+            ``RoundResult`` with companion turns only.
+
+        Raises:
+            RuntimeError: Only on truly unrecoverable errors.
         """
         ...

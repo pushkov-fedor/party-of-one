@@ -43,6 +43,7 @@ def call_with_retry(
     max_retries: int,
     agent_name: str,
     tools: list[dict] | None = None,
+    extra_body: dict | None = None,
 ) -> object:
     """Call LLM API with exponential backoff retry."""
     last_error = None
@@ -57,6 +58,8 @@ def call_with_retry(
             }
             if tools:
                 kwargs["tools"] = tools
+            if extra_body:
+                kwargs["extra_body"] = extra_body
             response = client.chat.completions.create(**kwargs)
             logger.info(
                 "llm_call",

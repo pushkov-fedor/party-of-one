@@ -98,6 +98,8 @@ class TestGuardedExecutorPassesValidCommands:
 
     def test_valid_command_returns_executor_result(self, guarded_executor_pass, mock_executor):
         """The result from the real executor is returned unchanged."""
+        # Simulate a prior roll_dice so the damage_character check passes.
+        guarded_executor_pass._roll_totals.append(4)
         mock_executor.execute.return_value = ToolCallResult(
             tool_name="damage_character", success=True,
             result={"new_hp": 3, "character_died": False},
@@ -255,8 +257,20 @@ class TestGuardedExecutorIntegration:
     def test_valid_damage_reaches_executor(self, guarded, alive_character):
         """A damage command for an existing alive character passes validation."""
         ge, mock_exec = guarded
+        # A prior roll_dice is required before damage_character.
+        mock_exec.execute.return_value = ToolCallResult(
+            tool_name="roll_dice", success=True,
+            result={"rolls": [4], "total": 4},
+        )
+        ge.execute("roll_dice", {"sides": 8, "count": 1})
+        # Now issue the damage command.
+        mock_exec.execute.return_value = ToolCallResult(
+            tool_name="damage_character", success=True,
+            result={"new_hp": 3},
+        )
         ge.execute("damage_character", {"character_id": alive_character, "amount": 3})
-        mock_exec.execute.assert_called_once()
+        # roll_dice + damage_character = 2 calls to the underlying executor.
+        assert mock_exec.execute.call_count == 2
 
     def test_nonexistent_character_blocked(self, guarded):
         """A damage command for a nonexistent character is blocked."""

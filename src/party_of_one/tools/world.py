@@ -142,6 +142,17 @@ class ToolExecutor(ToolExecutorABC):
     def _create_character(self, **kwargs) -> dict:
         if "disposition" in kwargs and isinstance(kwargs["disposition"], str):
             kwargs["disposition"] = Disposition(kwargs["disposition"])
+        # Prevent duplicate creation — return existing if name matches
+        name = kwargs.get("name", "")
+        if name:
+            existing = self.db.characters.get_all()
+            for c in existing:
+                if c.name == name:
+                    return {
+                        "error": f"Персонаж '{name}' уже существует",
+                        "character_id": c.id,
+                        "name": c.name,
+                    }
         char = self.db.characters.create(**kwargs)
         return {"character_id": char.id, "name": char.name}
 

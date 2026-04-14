@@ -544,7 +544,7 @@ class GameApp(App):
                 self.query_one("#narrative", RichLog).write,
                 f"\n[dim]── Раунд {i + 1}/{self.watch_rounds} ──[/dim]",
             )
-            result = self.orchestrator.process_round("наблюдает")
+            result = self.orchestrator.process_watch_round()
             for dm_resp in result.dm_responses:
                 self.call_from_thread(
                     self.query_one("#narrative", RichLog).write,

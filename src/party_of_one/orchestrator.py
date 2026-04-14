@@ -141,7 +141,64 @@ class Orchestrator(OrchestratorContract):
                                session_ended=True, end_reason="tpk")
 
         # Companion turns
-        for i, (agent, char_id) in enumerate(zip(self._companion_agents, self._companion_char_ids)):
+        tpk = self._process_companion_turns(
+            all_turns, dm_responses, actor_roles, companion_texts,
+        )
+        if tpk:
+            self.state = "session_ended"
+            return RoundResult(round_number=self.round_number, turns=all_turns,
+                               dm_responses=dm_responses, actor_roles=actor_roles,
+                               companion_texts=companion_texts,
+                               session_ended=True, end_reason="tpk")
+
+        # Compression check after round
+        self._try_compress()
+
+        self.state = "awaiting_player"
+        return RoundResult(round_number=self.round_number, turns=all_turns,
+                           dm_responses=dm_responses, actor_roles=actor_roles,
+                           companion_texts=companion_texts,
+                           session_ended=False)
+
+    def process_watch_round(self) -> RoundResult:
+        """Process one watch-mode round (companions only, no player turn)."""
+        if self.state != "awaiting_player":
+            raise RuntimeError(f"Cannot process round in state {self.state}")
+
+        all_turns: list[Turn] = []
+        dm_responses: list[DMResponse] = []
+        actor_roles: list[TurnRole] = []
+        companion_texts: dict[str, str] = {}
+        self.round_number += 1
+
+        tpk = self._process_companion_turns(
+            all_turns, dm_responses, actor_roles, companion_texts,
+        )
+        if tpk:
+            self.state = "session_ended"
+            return RoundResult(round_number=self.round_number, turns=all_turns,
+                               dm_responses=dm_responses, actor_roles=actor_roles,
+                               companion_texts=companion_texts,
+                               session_ended=True, end_reason="tpk")
+
+        self._try_compress()
+        self.state = "awaiting_player"
+        return RoundResult(round_number=self.round_number, turns=all_turns,
+                           dm_responses=dm_responses, actor_roles=actor_roles,
+                           companion_texts=companion_texts,
+                           session_ended=False)
+
+    def _process_companion_turns(
+        self,
+        all_turns: list[Turn],
+        dm_responses: list[DMResponse],
+        actor_roles: list[TurnRole],
+        companion_texts: dict[str, str],
+    ) -> bool:
+        """Process all alive companion turns. Returns True if TPK detected."""
+        for i, (agent, char_id) in enumerate(
+            zip(self._companion_agents, self._companion_char_ids),
+        ):
             role = TurnRole.COMPANION_A if i == 0 else TurnRole.COMPANION_B
             try:
                 comp_char = self.db.characters.get(char_id)
@@ -153,8 +210,8 @@ class Orchestrator(OrchestratorContract):
             comp_text = self._generate_companion_action(agent, comp_char)
             companion_texts[role.value] = comp_text
             action_text = (
-                f"Компаньон {agent.profile.name} ({agent.profile.class_}) действует: "
-                f"{comp_text}"
+                f"Компаньон {agent.profile.name} ({agent.profile.class_}) "
+                f"действует: {comp_text}"
             )
 
             dm_resp, turn = self._process_action(role, action_text)
@@ -163,20 +220,11 @@ class Orchestrator(OrchestratorContract):
             actor_roles.append(role)
 
             if self._check_tpk():
-                self.state = "session_ended"
-                return RoundResult(round_number=self.round_number, turns=all_turns,
-                                   dm_responses=dm_responses, session_ended=True, end_reason="tpk")
-
-        # Compression check after round
-        self._try_compress()
-
-        self.state = "awaiting_player"
-        return RoundResult(round_number=self.round_number, turns=all_turns,
-                           dm_responses=dm_responses, actor_roles=actor_roles,
-                           companion_texts=companion_texts,
-                           session_ended=False)
+                return True
+        return False
 
     def _process_action(self, role: TurnRole, action: str) -> tuple[DMResponse, Turn]:
+        self._guarded_executor.reset_turn()
         self.turn_number += 1
         self.db.turns.save_turn(Turn(id=0, turn_number=self.turn_number, role=role, content=action))
 
@@ -229,17 +277,19 @@ class Orchestrator(OrchestratorContract):
                 result = self.compressor.compress(recent)
                 if result.compressed:
                     # Save compressed summary
+                    from datetime import datetime
                     self.db.turns.save_compressed_history(CompressedHistory(
                         id=0, summary=result.summary,
                         covers_turns_from=result.from_turn,
                         covers_turns_to=result.to_turn,
+                        created_at=datetime.now(),
                     ))
                     # Remove compressed turns from working context
                     self.db.turns.delete_turns_before(result.to_turn)
                     logger.info("compression_triggered",
                                 turn_number=self.turn_number,
                                 turns_compressed=result.turns_compressed)
-            except RuntimeError:
+            except Exception:
                 logger.warning("compression_failed_fallback",
                                turn_number=self.turn_number)
 
@@ -316,11 +366,16 @@ class Orchestrator(OrchestratorContract):
 
 
 class _GuardedToolExecutor:
-    """Wraps ToolExecutor with guardrail validation before each execute."""
+    """Wraps ToolExecutor with guardrail + mechanical validation."""
 
     def __init__(self, executor: ToolExecutor, guardrail: PostLLMGuardrail):
         self._executor = executor
         self._guardrail = guardrail
+        self._roll_totals: list[int] = []
+
+    def reset_turn(self) -> None:
+        """Clear tracked rolls at the start of each DM turn."""
+        self._roll_totals.clear()
 
     def execute(self, tool_name: str, params: dict):
         from party_of_one.models import ToolCallResult
@@ -331,4 +386,37 @@ class _GuardedToolExecutor:
                 tool_name=tool_name, success=False,
                 error="; ".join(check.invalid_commands),
             )
-        return self._executor.execute(tool_name, params)
+
+        # Mechanical validation for combat
+        if tool_name == "damage_character":
+            if not self._roll_totals:
+                return ToolCallResult(
+                    tool_name=tool_name, success=False,
+                    error="Нельзя нанести урон без броска. Сначала вызови roll_dice.",
+                )
+            # Validate armor subtraction
+            amount = params.get("amount", 0)
+            target_id = params.get("character_id", "")
+            try:
+                char = self._executor.db.characters.get(target_id)
+                max_roll = max(self._roll_totals)
+                max_damage = max(0, max_roll - char.armor)
+                if amount > max_damage:
+                    return ToolCallResult(
+                        tool_name=tool_name, success=False,
+                        error=(
+                            f"Урон {amount} неверен. Бросок={max_roll}, "
+                            f"Броня цели={char.armor}, макс урон="
+                            f"{max_damage}. Вычти Броню из броска."
+                        ),
+                    )
+            except (KeyError, TypeError, AttributeError):
+                pass
+
+        result = self._executor.execute(tool_name, params)
+
+        # Track roll results for damage validation
+        if tool_name == "roll_dice" and result.success and result.result:
+            self._roll_totals.append(result.result.get("total", 0))
+
+        return result

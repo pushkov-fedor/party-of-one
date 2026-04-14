@@ -14,7 +14,7 @@ class LLMConfig(BaseModel):
     model: str = "openai/gpt-4.1"
     model_companion: str = "openai/gpt-4.1-mini"
     model_cheap: str = "openai/gpt-4.1-mini"
-    temperature_dm: float = 0.75
+    temperature_dm: float = 0.4
     temperature_companion: float = 0.65
     temperature_compressor: float = 0.2
     max_tokens_dm: int = 2000

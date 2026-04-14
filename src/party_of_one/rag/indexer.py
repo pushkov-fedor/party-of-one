@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -12,76 +13,192 @@ from party_of_one.logger import get_logger
 
 logger = get_logger()
 
+# ── Chunking ──────────────────────────────────────────────────────────────
+
+_MAX_TOKENS = 400  # ~260 words
+_OVERLAP_TOKENS = 50
+
+# Sections to exclude from indexing (summaries that duplicate main content)
+_EXCLUDED_SECTIONS = {"Краткие правила"}
+
 
 def _split_into_chunks(
     text: str,
-    max_tokens: int = 200,
-    overlap_tokens: int = 20,
+    max_tokens: int = _MAX_TOKENS,
+    overlap_tokens: int = _OVERLAP_TOKENS,
 ) -> list[dict]:
-    """Split markdown text into paragraph-level chunks with metadata."""
+    """Split markdown into heading-based chunks with header prepending.
+
+    Strategy:
+    1. Each subsection = one chunk (never merge across subsections).
+    2. Prepend heading path to chunk text for better embedding.
+    3. Long subsections split by sentences with overlap.
+    4. Bestiary split by individual monster entries.
+    5. Excluded sections (Краткие правила) are skipped.
+    """
+    sections = _extract_sections(text)
     chunks = []
-    current_section = ""
-    current_subsection = ""
 
-    paragraphs = re.split(r"\n\n+", text.strip())
-
-    for para in paragraphs:
-        para = para.strip()
-        if not para:
+    for sec in sections:
+        if sec["subsection"] in _EXCLUDED_SECTIONS:
             continue
 
-        if para.startswith("### "):
-            current_subsection = para.lstrip("# ").strip()
-            continue
-        if para.startswith("## "):
-            current_subsection = para.lstrip("# ").strip()
-            continue
-        if para.startswith("# "):
-            current_section = para.lstrip("# ").strip()
-            current_subsection = ""
+        header_prefix = sec["header_path"]
+        body = sec["body"].strip()
+        if not body:
             continue
 
-        words = para.split()
-        if len(words) < 1:
+        # Special handling: bestiary — split by individual monsters
+        if sec["subsection"] == "Бестиарий":
+            for mc in _split_bestiary(body, sec, header_prefix):
+                chunks.append(mc)
             continue
 
-        estimated_tokens = int(len(words) * 1.5)
+        full_text = f"{header_prefix}\n\n{body}" if header_prefix else body
+        est_tokens = int(len(full_text.split()) * 1.5)
 
-        if estimated_tokens <= max_tokens:
+        if est_tokens <= max_tokens:
             chunks.append({
-                "text": para,
-                "section": current_section,
-                "subsection": current_subsection,
+                "text": full_text,
+                "section": sec["section"],
+                "subsection": sec["subsection"],
+                "header_path": header_prefix,
             })
         else:
-            sentences = re.split(r"(?<=[.!?])\s+", para)
-            current_chunk_words: list[str] = []
-            for sentence in sentences:
-                s_words = sentence.split()
-                if len(current_chunk_words) + len(s_words) > max_tokens // 1.5:
-                    if current_chunk_words:
-                        chunks.append({
-                            "text": " ".join(current_chunk_words),
-                            "section": current_section,
-                            "subsection": current_subsection,
-                        })
-                        overlap_words = int(overlap_tokens / 1.5)
-                        current_chunk_words = current_chunk_words[-overlap_words:]
-                current_chunk_words.extend(s_words)
-            if current_chunk_words:
+            for part in _split_by_sentences(body, max_tokens, overlap_tokens):
+                part_text = (
+                    f"{header_prefix}\n\n{part}" if header_prefix else part
+                )
                 chunks.append({
-                    "text": " ".join(current_chunk_words),
-                    "section": current_section,
-                    "subsection": current_subsection,
+                    "text": part_text,
+                    "section": sec["section"],
+                    "subsection": sec["subsection"],
+                    "header_path": header_prefix,
                 })
 
     return chunks
 
 
+def _extract_sections(text: str) -> list[dict]:
+    """Parse markdown into sections with heading hierarchy."""
+    sections: list[dict] = []
+    h1 = h2 = h3 = ""
+    current_body_lines: list[str] = []
+    current_subsection = ""
+
+    def _flush():
+        body = "\n".join(current_body_lines).strip()
+        if body:
+            parts = [p for p in [h1, h2, h3] if p]
+            sections.append({
+                "section": h1,
+                "subsection": current_subsection or h2 or h1,
+                "header_path": " > ".join(parts),
+                "body": body,
+            })
+
+    for line in text.split("\n"):
+        stripped = line.strip()
+
+        if stripped.startswith("#### "):
+            _flush()
+            current_body_lines = []
+            h3 = stripped.lstrip("# ").strip()
+            current_subsection = h3
+        elif stripped.startswith("### "):
+            _flush()
+            current_body_lines = []
+            h3 = stripped.lstrip("# ").strip()
+            current_subsection = h3
+        elif stripped.startswith("## "):
+            _flush()
+            current_body_lines = []
+            h2 = stripped.lstrip("# ").strip()
+            h3 = ""
+            current_subsection = h2
+        elif stripped.startswith("# "):
+            _flush()
+            current_body_lines = []
+            h1 = stripped.lstrip("# ").strip()
+            h2 = h3 = ""
+            current_subsection = ""
+        else:
+            current_body_lines.append(line)
+
+    _flush()
+    return sections
+
+
+def _split_bestiary(
+    body: str, sec: dict, header_prefix: str,
+) -> list[dict]:
+    """Split bestiary into individual monster entries."""
+    monsters = re.split(r"\n(?=\*\*[А-ЯA-Z])", body)
+    chunks = []
+    for monster in monsters:
+        monster = monster.strip()
+        if not monster or len(monster.split()) < 5:
+            continue
+        # Extract monster name for better header
+        name_match = re.match(r"\*\*(.+?)\*\*", monster)
+        name = name_match.group(1) if name_match else "Монстр"
+        full = f"{header_prefix} > {name}\n\n{monster}"
+        chunks.append({
+            "text": full,
+            "section": sec["section"],
+            "subsection": sec["subsection"],
+            "header_path": f"{header_prefix} > {name}",
+        })
+    return chunks
+
+
+def _split_by_sentences(
+    text: str, max_tokens: int, overlap_tokens: int,
+) -> list[str]:
+    """Split text by sentences respecting token limit, no overlap."""
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    parts: list[str] = []
+    current_words: list[str] = []
+
+    for sentence in sentences:
+        s_words = sentence.split()
+        est = int((len(current_words) + len(s_words)) * 1.5)
+        if est > max_tokens and current_words:
+            parts.append(" ".join(current_words))
+            current_words = []
+        current_words.extend(s_words)
+
+    if current_words:
+        parts.append(" ".join(current_words))
+    return parts
+
+
+def export_chunks_jsonl(chunks: list[dict], path: str | Path) -> None:
+    """Export chunks to JSONL for eval dataset building."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        for i, chunk in enumerate(chunks):
+            record = {
+                "chunk_id": f"chunk_{i}",
+                "text": chunk["text"],
+                "section": chunk["section"],
+                "subsection": chunk["subsection"],
+                "header_path": chunk.get("header_path", ""),
+                "word_count": len(chunk["text"].split()),
+            }
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+# ── Indexer ───────────────────────────────────────────────────────────────
+
+
 class Indexer(IndexerContract):
     """Indexes Cairn SRD markdown into ChromaDB with manual embeddings."""
 
-    def __init__(self, config: RAGConfig | None = None, vector_store_path: str = ""):
+    def __init__(
+        self, config: RAGConfig | None = None, vector_store_path: str = "",
+    ):
         if config:
             self._vector_store_path = config.vector_store_path
             self._model_name = config.embedding_model
@@ -107,7 +224,9 @@ class Indexer(IndexerContract):
 
         model = SentenceTransformer(self._model_name)
         documents = [c["text"] for c in raw_chunks]
-        embeddings = model.encode(documents, normalize_embeddings=True).tolist()
+        embeddings = model.encode(
+            documents, normalize_embeddings=True,
+        ).tolist()
 
         client = chromadb.PersistentClient(path=self._vector_store_path)
         try:
@@ -121,8 +240,10 @@ class Indexer(IndexerContract):
         )
 
         ids = [f"chunk_{i}" for i in range(len(raw_chunks))]
-        metadatas = [{"section": c["section"], "subsection": c["subsection"]}
-                     for c in raw_chunks]
+        metadatas = [
+            {"section": c["section"], "subsection": c["subsection"]}
+            for c in raw_chunks
+        ]
 
         collection.add(
             ids=ids,
@@ -131,6 +252,9 @@ class Indexer(IndexerContract):
             metadatas=metadatas,
         )
 
-        logger.info("indexer_complete", chunks=len(raw_chunks),
-                     source=str(source_path))
+        logger.info(
+            "indexer_complete",
+            chunks=len(raw_chunks),
+            source=str(source_path),
+        )
         return len(raw_chunks)
