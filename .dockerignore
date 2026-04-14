@@ -6,3 +6,8 @@ data/chroma/
 data/sessions/
 logs/
 .env
+eval/
+tests/
+docs/
+*.md
+uv.lock

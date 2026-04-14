@@ -155,6 +155,14 @@ class PostLLMGuardrail(PostLLMGuardrailContract):
             amount = args.get("amount", 0)
             if amount < 1:
                 return f"damage {amount} must be >= 1"
+            char_id = args.get("character_id")
+            if char_id:
+                try:
+                    char = self.db.characters.get(char_id)
+                    if char.status.value in ("dead", "incapacitated"):
+                        return f"cannot damage {char.status.value} character"
+                except KeyError:
+                    pass
         if name == "create_character":
             armor = args.get("armor", 0)
             if armor < 0 or armor > 3:

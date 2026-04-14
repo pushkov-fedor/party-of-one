@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
+from party_of_one.embeddings import embed_texts
 from party_of_one.logger import get_logger
 
 logger = get_logger()
@@ -15,32 +16,27 @@ logger = get_logger()
 class EmbeddingDetector:
     """Compares player input embedding against a bank of known injection patterns.
 
-    Lazy-loads the embedding model on first use. Reuses the same model
-    that RAG will use (deepvk/USER-bge-m3).
+    Uses OpenRouter embeddings API (baai/bge-m3).
     """
 
     def __init__(
         self,
         patterns_path: str = "data/injection_patterns.yaml",
-        model_name: str = "deepvk/USER-bge-m3",
+        model_name: str = "baai/bge-m3",
         threshold: float = 0.82,
     ):
         self._patterns_path = patterns_path
         self._model_name = model_name
         self.threshold = threshold
-        self._model = None
         self._pattern_embeddings = None
         self._patterns: list[str] = []
+        self._loaded = False
 
     def _ensure_loaded(self):
-        """Lazy-load model and pattern embeddings."""
-        if self._model is not None:
+        """Lazy-load pattern embeddings via API."""
+        if self._loaded:
             return
-
-        from sentence_transformers import SentenceTransformer
-
-        logger.info("embedding_detector_loading", model=self._model_name)
-        self._model = SentenceTransformer(self._model_name)
+        self._loaded = True
 
         # Load patterns
         path = Path(self._patterns_path)
@@ -54,8 +50,8 @@ class EmbeddingDetector:
 
         # Pre-compute embeddings
         if self._patterns:
-            self._pattern_embeddings = self._model.encode(
-                self._patterns, normalize_embeddings=True,
+            self._pattern_embeddings = embed_texts(
+                self._patterns, model=self._model_name,
             )
             logger.info("embedding_detector_ready",
                          patterns=len(self._patterns))
@@ -74,9 +70,7 @@ class EmbeddingDetector:
             return False, None
 
         # Embed the input
-        input_embedding = self._model.encode(
-            [text], normalize_embeddings=True,
-        )
+        input_embedding = embed_texts([text], model=self._model_name)
 
         # Cosine similarity (embeddings already normalized → dot product)
         similarities = input_embedding @ self._pattern_embeddings.T

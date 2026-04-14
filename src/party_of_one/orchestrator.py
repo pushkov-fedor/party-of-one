@@ -47,7 +47,10 @@ class Orchestrator(OrchestratorContract):
         self.pre_guardrail = PreLLMGuardrail(config.guardrails)
         self.post_guardrail = PostLLMGuardrail(config.guardrails, db=self.db)
         self._guarded_executor = _GuardedToolExecutor(self.executor, self.post_guardrail)
-        self.dm = DMAgent(config.llm, tool_executor=self._guarded_executor)
+        self.dm = DMAgent(
+            config.llm, tool_executor=self._guarded_executor,
+            max_tool_calls=config.game.max_tool_calls_per_turn,
+        )
         self.compressor = HistoryCompressor(config, db=self.db)
         self.state = "awaiting_player"
         self.turn_number = 0

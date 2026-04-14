@@ -204,7 +204,7 @@ class Indexer(IndexerContract):
             self._model_name = config.embedding_model
         else:
             self._vector_store_path = vector_store_path
-            self._model_name = "deepvk/USER-bge-m3"
+            self._model_name = "baai/bge-m3"
 
     def index(self, source_path: str | Path) -> int:
         source_path = Path(source_path)
@@ -219,13 +219,12 @@ class Indexer(IndexerContract):
         if not raw_chunks:
             return 0
 
-        from sentence_transformers import SentenceTransformer
         import chromadb
+        from party_of_one.embeddings import embed_texts
 
-        model = SentenceTransformer(self._model_name)
         documents = [c["text"] for c in raw_chunks]
-        embeddings = model.encode(
-            documents, normalize_embeddings=True,
+        embeddings = embed_texts(
+            documents, model=self._model_name,
         ).tolist()
 
         client = chromadb.PersistentClient(path=self._vector_store_path)

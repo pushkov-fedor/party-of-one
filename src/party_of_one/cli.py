@@ -325,6 +325,14 @@ class GameApp(App):
     # ── Setup flow ─────────────────────────────────────────────────────
 
     def _begin_setup(self) -> None:
+        if self.watch_mode:
+            self._selected_archetype = self._archetypes[0]
+            self._selected_companions = [self._profiles[0].name, self._profiles[1].name]
+            log = self.query_one("#narrative", RichLog)
+            log.write("[dim]⏳ Watch mode — Мастер подземелий готовит сцену...[/dim]\n")
+            self._start_game("Мрачное средневековое фэнтези")
+            return
+
         self.push_screen(
             SelectionScreen(
                 "⚔ Party of One ⚔",
@@ -406,14 +414,15 @@ class GameApp(App):
         # Show llm_call info in narrative
         log.write("\n[dim italic]⚙ Сцена создана[/dim italic]\n")
 
-        inp = self.query_one("#action-input", Input)
-        inp.disabled = False
-        inp.placeholder = "⚔ Что вы делаете? (/help — команды)"
-        inp.focus()
-        self.sub_title = f"Раунд 1"
-
         if self.watch_mode:
+            self.sub_title = f"Watch: 0/{self.watch_rounds}"
             self._run_watch_mode()
+        else:
+            inp = self.query_one("#action-input", Input)
+            inp.disabled = False
+            inp.placeholder = "⚔ Что вы делаете? (/help — команды)"
+            inp.focus()
+            self.sub_title = f"Раунд 1"
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "action-input":
@@ -545,10 +554,21 @@ class GameApp(App):
                 f"\n[dim]── Раунд {i + 1}/{self.watch_rounds} ──[/dim]",
             )
             result = self.orchestrator.process_watch_round()
-            for dm_resp in result.dm_responses:
+            role_labels = {
+                "companion_a": "🛡 Компаньон A",
+                "companion_b": "🛡 Компаньон B",
+            }
+            for actor_role, dm_resp in zip(result.actor_roles, result.dm_responses):
+                role_val = actor_role.value
+                if role_val in result.companion_texts:
+                    label = role_labels.get(role_val, role_val)
+                    self.call_from_thread(
+                        self.query_one("#narrative", RichLog).write,
+                        f"\n[italic #8888aa]{label}:[/italic #8888aa] [#a0a0c0]{result.companion_texts[role_val]}[/#a0a0c0]",
+                    )
                 self.call_from_thread(
                     self.query_one("#narrative", RichLog).write,
-                    f"\n[#c0c0d0]{dm_resp.narrative}[/#c0c0d0]",
+                    f"\n[bold italic #d4a017]☠ Мастер:[/bold italic #d4a017] [#c0c0d0]{dm_resp.narrative}[/#c0c0d0]",
                 )
             self.call_from_thread(
                 self.query_one("#sidebar", PartySidebar).update_party,

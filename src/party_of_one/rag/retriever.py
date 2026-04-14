@@ -39,9 +39,8 @@ class Retriever(RetrieverContract):
             self._vector_store_path = vector_store_path
             self._top_k = top_k
             self._min_similarity = min_similarity
-            self._model_name = "deepvk/USER-bge-m3"
+            self._model_name = "baai/bge-m3"
         self._collection = None
-        self._model = None
         self._load_attempted = False
 
     def _ensure_loaded(self):
@@ -50,11 +49,9 @@ class Retriever(RetrieverContract):
         self._load_attempted = True
         try:
             import chromadb
-            from sentence_transformers import SentenceTransformer
 
             client = chromadb.PersistentClient(path=self._vector_store_path)
             self._collection = client.get_collection("cairn_srd")
-            self._model = SentenceTransformer(self._model_name)
             logger.info("retriever_loaded", path=self._vector_store_path)
         except Exception as e:
             logger.warning("retriever_unavailable", error=str(e))
@@ -64,14 +61,15 @@ class Retriever(RetrieverContract):
     def search(self, query: str) -> RetrievalResult:
         self._ensure_loaded()
 
-        if self._collection is None or self._model is None:
+        if self._collection is None:
             logger.warning("retriever_fallback", reason="vector store unavailable")
             _stdlib_logger.warning("retriever_fallback: vector store unavailable")
             return RetrievalResult(chunks=[], query=query)
 
         try:
-            query_embedding = self._model.encode(
-                [query], normalize_embeddings=True,
+            from party_of_one.embeddings import embed_texts
+            query_embedding = embed_texts(
+                [query], model=self._model_name,
             ).tolist()
 
             results = self._collection.query(

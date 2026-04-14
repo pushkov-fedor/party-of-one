@@ -25,11 +25,15 @@ logger = get_logger()
 class DMAgent(DMAgentContract):
     """DM Agent — calls LLM with tool definitions, parses response."""
 
-    def __init__(self, config: LLMConfig, tool_executor=None, extra_body: dict | None = None):
+    def __init__(
+        self, config: LLMConfig, tool_executor=None,
+        extra_body: dict | None = None, max_tool_calls: int = 10,
+    ):
         self.config = config
         self.tool_executor = tool_executor
         self._current_max_tokens = config.max_tokens_dm
         self._extra_body = extra_body
+        self._max_tool_calls = max_tool_calls
         self.client = create_openrouter_client()
 
     def generate(
@@ -92,7 +96,10 @@ class DMAgent(DMAgentContract):
         return self._tool_use_loop(messages)
 
     _RETRY_MSG = "Ты не дал ответа. Опиши что происходит в мире — 2-4 предложения."
-    _MAX_TOOL_CALLS = 6
+    _NARRATE_AFTER_TOOLS_MSG = (
+        "Все команды выполнены. Теперь опиши что произошло — 2-4 предложения. "
+        "Только нарратив, без tool calls."
+    )
 
     def _tool_use_loop(self, messages: list[dict], max_rounds: int = 20) -> DMResponse:
         all_tool_calls: list[dict] = []
@@ -100,7 +107,7 @@ class DMAgent(DMAgentContract):
         max_empty_retries = 3
 
         for _ in range(max_rounds):
-            if len(all_tool_calls) >= self._MAX_TOOL_CALLS:
+            if len(all_tool_calls) >= self._max_tool_calls:
                 logger.info("dm_tool_limit_reached", count=len(all_tool_calls))
                 break
 
@@ -141,8 +148,37 @@ class DMAgent(DMAgentContract):
             parsed.tool_calls = all_tool_calls
             return parsed
 
-        logger.warning("tool_use_loop_max_rounds", rounds=max_rounds)
-        return DMResponse(narrative="*Тишина повисает в воздухе...*", tool_calls=all_tool_calls)
+        # Tool limit or max rounds — ask LLM to narrate without tools
+        logger.info("dm_narrative_followup",
+                     reason="tool_limit_or_max_rounds",
+                     tool_count=len(all_tool_calls))
+        return self._narrative_followup(messages, all_tool_calls)
+
+    def _narrative_followup(
+        self, messages: list[dict], all_tool_calls: list[dict],
+    ) -> DMResponse:
+        """One final LLM call with tools=None to generate narrative."""
+        messages.append({"role": "user", "content": self._NARRATE_AFTER_TOOLS_MSG})
+        try:
+            response = call_with_retry(
+                self.client, model=self.config.model, messages=messages,
+                temperature=self.config.temperature_dm,
+                max_tokens=self._current_max_tokens,
+                timeout=self.config.timeout_seconds,
+                max_retries=self.config.max_retries, agent_name="dm",
+                tools=None,
+                extra_body=self._extra_body,
+            )
+            parsed = self._parse_response(response)
+            if parsed.narrative and parsed.narrative.strip():
+                return DMResponse(narrative=parsed.narrative, tool_calls=all_tool_calls)
+        except Exception as e:
+            logger.warning("dm_narrative_followup_error", error=str(e))
+
+        return DMResponse(
+            narrative="*Тишина повисает в воздухе...*",
+            tool_calls=all_tool_calls,
+        )
 
     def _parse_response(self, response) -> DMResponse:
         message = response.choices[0].message

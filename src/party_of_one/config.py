@@ -24,7 +24,7 @@ class LLMConfig(BaseModel):
 
 
 class RAGConfig(BaseModel):
-    embedding_model: str = "deepvk/USER-bge-m3"
+    embedding_model: str = "baai/bge-m3"
     vector_store_path: str = "./data/chroma"
     top_k: int = 3
     min_similarity: float = 0.3
